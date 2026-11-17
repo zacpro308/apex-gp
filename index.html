@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Apex GP</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:ital,wght@0,400;0,500;0,600;0,700;0,800;1,800&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#07080c;--panel:rgba(10,12,18,.72);--line:rgba(255,255,255,.1);--text:#f2f4f8;--muted:#9aa3b2;--acc:#ffcc00;--red:#ff3b3b;--green:#22d36b;--purple:#b46bff}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%;overflow:hidden;background:var(--bg);color:var(--text);font-family:'Barlow Condensed',system-ui,sans-serif;letter-spacing:.02em}
+canvas#gl{position:fixed;inset:0;width:100%;height:100%;display:block}
+.hidden{display:none!important}
+.panel{background:var(--panel);backdrop-filter:blur(10px);-webkit-backdrop-filter:blur(10px);border:1px solid var(--line);border-radius:10px}
+button{font-family:inherit;cursor:pointer}
+
+/* HUD */
+#hud{position:fixed;inset:0;pointer-events:none;user-select:none}
+#tl{position:absolute;left:16px;top:16px;padding:8px 18px 10px;min-width:150px}
+#tl .pos{font-size:56px;font-weight:800;line-height:1;font-style:italic}
+#tl .pos small{font-size:24px;color:var(--muted);font-weight:600;font-style:normal}
+#hLap{font-size:20px;font-weight:600;color:var(--muted)}
+#hLap b{color:var(--text)}
+#tr{position:absolute;right:16px;top:16px;padding:10px 16px;min-width:230px}
+#tr .row{display:flex;justify-content:space-between;gap:20px;font-size:20px;line-height:1.35}
+#tr .row span{color:var(--muted);font-weight:600}
+#tr .row b{font-variant-numeric:tabular-nums;font-weight:700}
+#hCur.invalid{color:var(--red)}
+#trackTag{position:absolute;right:16px;top:150px;font-size:15px;font-weight:700;color:var(--muted);letter-spacing:.12em}
+#board{position:absolute;left:16px;top:118px;padding:6px 0;width:200px;font-size:16px;max-height:calc(100vh - 200px);overflow:hidden}
+#board .r{display:grid;grid-template-columns:24px 4px 1fr auto;gap:8px;align-items:center;padding:1px 12px}
+#board .r .p{color:var(--muted);text-align:right;font-weight:700}
+#board .r .c{height:14px;border-radius:2px}
+#board .r .n{font-weight:700}
+#board .r .g{color:var(--muted);font-variant-numeric:tabular-nums}
+#board .r.me{background:rgba(255,204,0,.16)}
+#board .r.me .n{color:var(--acc)}
+#speedo{position:absolute;left:50%;bottom:18px;transform:translateX(-50%);padding:10px 22px 12px;width:340px;text-align:center}
+#shift{display:flex;gap:5px;justify-content:center;margin-bottom:8px}
+#shift i{width:22px;height:8px;border-radius:4px;background:rgba(255,255,255,.1)}
+#shift i.g{background:var(--green);box-shadow:0 0 8px var(--green)}#shift i.r{background:var(--red);box-shadow:0 0 8px var(--red)}#shift i.b{background:#3d8bff;box-shadow:0 0 8px #3d8bff}
+#speedo .grid{display:grid;grid-template-columns:1fr 90px 1fr;align-items:end}
+#hSpd{font-size:58px;font-weight:800;line-height:.9;font-variant-numeric:tabular-nums;font-style:italic}
+#speedo small{display:block;color:var(--muted);font-size:15px;font-weight:600}
+#hGear{font-size:66px;font-weight:800;line-height:.9;color:var(--acc);font-style:italic}
+#hRpm{font-size:28px;font-weight:700;line-height:.9;font-variant-numeric:tabular-nums;color:var(--muted)}
+#mapWrap{position:absolute;right:16px;bottom:16px;padding:8px}
+#minimap{display:block;width:200px;height:200px}
+#camTag{position:absolute;left:16px;bottom:16px;padding:8px 14px;font-size:16px;font-weight:600;color:var(--muted)}
+#camTag b{color:var(--text)}
+#wrongway{position:absolute;left:50%;top:30%;transform:translateX(-50%);font-size:54px;font-weight:800;color:var(--red);text-shadow:0 3px 18px rgba(0,0,0,.6);animation:blink .6s steps(2) infinite}
+@keyframes blink{50%{opacity:.2}}
+#msg{position:absolute;left:50%;top:22%;transform:translateX(-50%);font-size:46px;font-weight:800;font-style:italic;text-align:center;text-shadow:0 3px 18px rgba(0,0,0,.7);transition:opacity .3s;opacity:0;white-space:nowrap}
+#msg.show{opacity:1}
+#msg small{display:block;font-size:22px;font-weight:600;font-style:normal;color:#d7dce4}
+#startLights{position:absolute;left:50%;top:70px;transform:translateX(-50%);display:flex;gap:12px;padding:12px 16px}
+#startLights .pod{background:#0d0d10;border-radius:8px;padding:8px;display:flex;flex-direction:column;gap:8px}
+#startLights .pod i{width:34px;height:34px;border-radius:50%;background:#2a0b0b}
+#startLights .pod.on i{background:#ff2020;box-shadow:0 0 18px #ff2020}
+
+/* Overlays */
+.overlay{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(5,6,10,.55);backdrop-filter:blur(4px)}
+.card{padding:26px 30px;min-width:360px;max-width:94vw;max-height:94vh;overflow:auto}
+.card h2{font-size:42px;font-weight:800;font-style:italic;margin-bottom:12px}
+.btns{display:flex;flex-direction:column;gap:10px;margin-top:18px}
+.btn{background:rgba(255,255,255,.08);border:1px solid var(--line);color:var(--text);font-size:22px;font-weight:700;padding:10px 20px;border-radius:8px;text-transform:uppercase;letter-spacing:.06em}
+.btn:hover{background:rgba(255,255,255,.16)}
+.btn.primary{background:var(--acc);color:#111;border-color:var(--acc)}
+.btn.primary:hover{filter:brightness(1.08)}
+table.res{width:100%;border-collapse:collapse;font-size:19px;margin-top:6px}
+table.res th{text-align:left;color:var(--muted);font-weight:600;padding:4px 10px;border-bottom:1px solid var(--line)}
+table.res td{padding:4px 10px;font-variant-numeric:tabular-nums}
+table.res tr.me td{background:rgba(255,204,0,.16);color:var(--acc);font-weight:700}
+.sw{display:inline-block;width:4px;height:14px;border-radius:2px;margin-right:8px;vertical-align:-2px}
+.fl{color:var(--purple);font-weight:700}
+#resWrap{display:flex;gap:26px;flex-wrap:wrap}
+#champBox{min-width:260px}
+#champBox h3{font-size:22px;font-weight:700;margin-bottom:4px;color:var(--acc)}
+#loading{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;z-index:50;background:rgba(5,6,10,.45);font-size:30px;font-weight:700;letter-spacing:.2em}
+#loading span{animation:blink 1s steps(2) infinite}
+
+/* Menu */
+#menu{position:fixed;inset:0;display:grid;grid-template-columns:400px 1fr 400px;gap:20px;padding:24px;background:linear-gradient(90deg,rgba(5,6,10,.88) 0,rgba(5,6,10,.4) 430px,rgba(5,6,10,0) 50%,rgba(5,6,10,.4) calc(100% - 420px),rgba(5,6,10,.88) 100%)}
+#menu .left{display:flex;flex-direction:column;gap:12px;overflow:auto;padding-right:4px}
+.logo{font-size:68px;font-weight:800;font-style:italic;line-height:.9;letter-spacing:.01em}
+.logo span{color:var(--acc)}
+.tag{color:var(--muted);font-size:18px;margin-top:4px}
+.opt{padding:11px 14px}
+.opt h4{font-size:14px;color:var(--muted);text-transform:uppercase;letter-spacing:.12em;margin-bottom:8px;font-weight:600}
+.seg{display:flex;gap:6px;flex-wrap:wrap}
+.seg button{flex:1;background:rgba(255,255,255,.06);border:1px solid var(--line);color:var(--text);font-size:18px;font-weight:700;padding:6px 10px;border-radius:7px;min-width:60px}
+.seg button.on{background:var(--acc);color:#111;border-color:var(--acc)}
+.swatches{display:flex;gap:8px}
+.swatches button{width:32px;height:32px;border-radius:50%;border:3px solid transparent}
+.swatches button.on{border-color:#fff}
+.keys{font-size:17px;color:var(--muted);line-height:1.6}
+.keys kbd{display:inline-block;min-width:26px;text-align:center;background:rgba(255,255,255,.1);border:1px solid var(--line);border-radius:5px;padding:0 6px;color:var(--text);font-family:inherit;font-weight:700;margin-right:2px}
+#seasonInfo{font-size:19px;line-height:1.35}
+#seasonInfo small{color:var(--muted);font-size:16px}
+#newSeason{margin-top:8px;font-size:15px;padding:5px 10px}
+#startBtn{font-size:28px;padding:14px}
+#menu .right{display:flex;flex-direction:column;gap:10px;overflow:auto;padding-right:6px}
+#menu .right h3{font-size:14px;color:var(--muted);text-transform:uppercase;letter-spacing:.12em;font-weight:600}
+.tcard{display:grid;grid-template-columns:26px 80px 1fr;gap:10px;padding:8px 10px;cursor:pointer;align-items:center;transition:border-color .15s,background .15s}
+.tcard:hover{border-color:rgba(255,255,255,.25)}
+.tcard.on{border-color:var(--acc);background:rgba(30,26,8,.85)}
+.tcard.locked{cursor:default}
+.tcard.locked:not(.on){opacity:.55}
+.tcard .rnd{font-size:18px;font-weight:800;color:var(--muted);font-style:italic}
+.tcard canvas{width:80px;height:60px;display:block}
+.tcard .nm{font-size:20px;font-weight:700;line-height:1.05}
+.tcard .lc{font-size:14px;color:var(--muted)}
+.tcard .st{font-size:14px;color:var(--muted);margin-top:2px}
+.tcard .st b{color:var(--text)}
+#trackInfo{position:absolute;left:50%;bottom:28px;transform:translateX(-50%);text-align:center;pointer-events:none;width:min(46vw,700px)}
+#trackInfo .n{font-size:50px;font-weight:800;font-style:italic;text-shadow:0 3px 20px rgba(0,0,0,.7)}
+#trackInfo .b{font-size:20px;color:#e6e9ef;text-shadow:0 2px 10px rgba(0,0,0,.85)}
+@media (max-width:1150px){#menu{grid-template-columns:1fr;overflow:auto;background:rgba(5,6,10,.82)}#trackInfo{display:none}}
+</style>
+</head>
+<body>
+<canvas id="gl"></canvas>
+
+<div id="hud" class="hidden">
+  <div id="tl" class="panel"><div class="pos"><span id="hPos">P1</span><small id="hPosOf">/10</small></div><div id="hLap">LAP <b>1</b>/5</div></div>
+  <div id="board" class="panel"></div>
+  <div id="tr" class="panel">
+    <div class="row"><span>CURRENT</span><b id="hCur">0:00.000</b></div>
+    <div class="row"><span>LAST</span><b id="hLast">--:--.---</b></div>
+    <div class="row"><span>BEST</span><b id="hBest">--:--.---</b></div>
+    <div class="row"><span>RECORD</span><b id="hRec">--:--.---</b></div>
+  </div>
+  <div id="trackTag"></div>
+  <div id="speedo" class="panel">
+    <div id="shift"></div>
+    <div class="grid">
+      <div><div id="hSpd">0</div><small>KM/H</small></div>
+      <div id="hGear">N</div>
+      <div><div id="hRpm">4000</div><small>RPM</small></div>
+    </div>
+  </div>
+  <div id="mapWrap" class="panel"><canvas id="minimap" width="400" height="400"></canvas></div>
+  <div id="camTag" class="panel">CAMERA <b id="camName">CHASE</b> · C to switch · ESC pause</div>
+  <div id="wrongway" class="hidden">WRONG WAY</div>
+  <div id="startLights" class="panel hidden"></div>
+  <div id="msg"></div>
+</div>
+
+<div id="menu">
+  <div class="left">
+    <div><div class="logo">APEX<span>GP</span></div><div class="tag">Open-wheel racing · 24-round world championship</div></div>
+    <div class="opt panel"><h4>Mode</h4><div class="seg" data-opt="mode"><button data-v="race">Quick Race</button><button data-v="champ">Championship</button><button data-v="tt">Time Trial</button></div></div>
+    <div class="opt panel hidden" id="seasonBox"><h4>Season</h4><div id="seasonInfo"></div><button class="btn" id="newSeason">Start a new season</button></div>
+    <div class="opt panel" id="optLaps"><h4>Laps</h4><div class="seg" data-opt="laps"><button data-v="3">3</button><button data-v="5">5</button><button data-v="10">10</button></div></div>
+    <div class="opt panel" id="optOpp"><h4>Rivals</h4><div class="seg" data-opt="opp"><button data-v="5">5</button><button data-v="9">9</button><button data-v="15">15</button></div></div>
+    <div class="opt panel" id="optDiff"><h4>AI Difficulty</h4><div class="seg" data-opt="diff"><button data-v="easy">Easy</button><button data-v="medium">Medium</button><button data-v="hard">Hard</button></div></div>
+    <div class="opt panel"><h4>Graphics</h4><div class="seg" data-opt="gfx"><button data-v="0">Low</button><button data-v="1">High</button><button data-v="2">Ultra</button></div></div>
+    <div class="opt panel"><h4>Your Livery</h4><div class="swatches" id="swatches"></div></div>
+    <div class="opt panel"><h4>Controls</h4><div class="keys"><kbd>W</kbd> Throttle &nbsp; <kbd>S</kbd> Brake / reverse<br><kbd>A</kbd> <kbd>D</kbd> Steer &nbsp; <kbd>C</kbd> Camera &nbsp; <kbd>ESC</kbd> Pause &nbsp; <kbd>M</kbd> Mute</div></div>
+    <button class="btn primary" id="startBtn">Start Race</button>
+  </div>
+  <div></div>
+  <div class="right"><h3>Calendar</h3><div id="trackList" style="display:flex;flex-direction:column;gap:8px"></div></div>
+  <div id="trackInfo"><div class="n" id="tiName"></div><div class="b" id="tiBlurb"></div></div>
+</div>
+
+<div id="pause" class="overlay hidden"><div class="card panel"><h2>Paused</h2><div class="btns">
+  <button class="btn primary" id="pResume">Resume</button><button class="btn" id="pRestart">Restart</button><button class="btn" id="pQuit">Quit to menu</button></div></div></div>
+
+<div id="results" class="overlay hidden"><div class="card panel">
+  <h2 id="resTitle">Results</h2><div id="resSub" style="color:var(--muted);font-size:20px;margin:-6px 0 10px"></div>
+  <div id="resWrap">
+    <div style="flex:2;min-width:520px"><table class="res" id="resTable"></table></div>
+    <div id="champBox" class="hidden"><h3 id="champTitle"></h3><table class="res" id="champTable"></table></div>
+  </div>
+  <div class="btns" style="flex-direction:row"><button class="btn primary" id="rAgain" style="flex:1">Race again</button><button class="btn" id="rMenu" style="flex:1">Main menu</button></div>
+</div></div>
+
+<div id="loading" class="hidden"><span>LOADING CIRCUIT</span></div>
+
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>
