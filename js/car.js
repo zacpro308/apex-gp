@@ -37,7 +37,7 @@ const POD = [[-1.55, 0.06, 0.08, 0.3, 3], [-1.15, 0.19, 0.17, 0.33, 3], [-0.5, 0
 
 let MODEL = null;
 function buildModel() {
-  const buckets = { body: [], acc: [], carbon: [], dark: [], metal: [], light: [] };
+  const buckets = { body: [], acc: [], carbon: [], dark: [], metal: [], light: [], fw_carbon: [], fw_body: [], fw_acc: [], rw_acc: [], rw_body: [], rw_carbon: [] };
   const add = (geo, key, x = 0, y = 0, z = 0, rx = 0, ry = 0, rz = 0, sx = 1, sy = 1, sz = 1) => {
     let g = geo.index ? geo.toNonIndexed() : geo.clone();
     g.deleteAttribute('uv');
@@ -68,15 +68,15 @@ function buildModel() {
   // diffuser
   add(RB(1.0, 0.24, 0.45, 0.02), 'carbon', 0, 0.17, -2.1, 0.35);
   // front wing: main plane + 2 flaps + endplates + pylons
-  add(RB(1.96, 0.03, 0.42, 0.012), 'carbon', 0, 0.1, 3.18);
-  add(RB(1.86, 0.025, 0.22, 0.01), 'body', 0, 0.165, 3.05, -0.28);
-  add(RB(1.76, 0.025, 0.2, 0.01), 'acc', 0, 0.225, 2.95, -0.5);
-  for (const sx of [1, -1]) { add(RB(0.025, 0.25, 0.66, 0.01), 'carbon', sx * 0.98, 0.18, 3.1); add(RB(0.02, 0.14, 0.18), 'carbon', sx * 0.1, 0.16, 2.9); }
+  add(RB(1.96, 0.03, 0.42, 0.012), 'fw_carbon', 0, 0.1, 3.18);
+  add(RB(1.86, 0.025, 0.22, 0.01), 'fw_body', 0, 0.165, 3.05, -0.28);
+  add(RB(1.76, 0.025, 0.2, 0.01), 'fw_acc', 0, 0.225, 2.95, -0.5);
+  for (const sx of [1, -1]) { add(RB(0.025, 0.25, 0.66, 0.01), 'fw_carbon', sx * 0.98, 0.18, 3.1); add(RB(0.02, 0.14, 0.18), 'fw_carbon', sx * 0.1, 0.16, 2.9); }
   // rear wing
-  add(RB(1.0, 0.05, 0.36, 0.015), 'acc', 0, 0.99, -2.32, 0.1);
-  add(RB(1.0, 0.035, 0.22, 0.012), 'body', 0, 1.11, -2.45, -0.35);
+  add(RB(1.0, 0.05, 0.36, 0.015), 'rw_acc', 0, 0.99, -2.32, 0.1);
+  add(RB(1.0, 0.035, 0.22, 0.012), 'rw_body', 0, 1.11, -2.45, -0.35);
   add(RB(1.0, 0.03, 0.18, 0.01), 'carbon', 0, 0.52, -2.33, 0.15);
-  for (const sx of [1, -1]) add(RB(0.03, 0.62, 0.74, 0.01), 'body', sx * 0.515, 0.88, -2.36);
+  for (const sx of [1, -1]) add(RB(0.03, 0.62, 0.74, 0.01), 'rw_body', sx * 0.515, 0.88, -2.36);
   add(RB(0.05, 0.42, 0.12, 0.01), 'carbon', 0, 0.74, -2.22);
   // exhaust + rain light
   add(new THREE.CylinderGeometry(0.045, 0.05, 0.16, 12), 'metal', 0, 0.58, -2.2, Math.PI / 2);
@@ -101,7 +101,7 @@ function buildModel() {
     arm(sx * 0.3, 0.45, -1.4, sx * 0.76, 0.48, -1.55); arm(sx * 0.3, 0.3, -1.7, sx * 0.76, 0.26, -1.55); arm(sx * 0.3, 0.3, -1.35, sx * 0.76, 0.26, -1.55);
   }
   const merged = {};
-  for (const k in buckets) merged[k] = mergeGeometries(buckets[k], false);
+  for (const k in buckets) if (buckets[k].length) merged[k] = mergeGeometries(buckets[k], false);
   // wheels (shared)
   const tyreProfile = (R, w, rim) => [[rim, -w / 2], [R - 0.05, -w / 2 - 0.003], [R - 0.012, -w / 2 + 0.03], [R, -w / 2 + 0.07], [R, w / 2 - 0.07], [R - 0.012, w / 2 - 0.03], [R - 0.05, w / 2 + 0.003], [rim, w / 2]].map(p => new THREE.Vector2(p[0], p[1]));
   const wheelGeo = (R, w) => ({
@@ -124,6 +124,7 @@ function buildModel() {
       g.strokeStyle = '#3a3d44'; g.lineWidth = 5; g.beginPath(); g.arc(0, 0, 60, 0, Math.PI * 2); g.stroke();
     }, { repeat: false }), roughness: 0.45, metalness: 0.6 }),
     soft: new THREE.MeshStandardMaterial({ color: 0xe2231a, roughness: 0.6 }), medium: new THREE.MeshStandardMaterial({ color: 0xf5c400, roughness: 0.6 }), hard: new THREE.MeshStandardMaterial({ color: 0xdddddd, roughness: 0.6 }),
+    inter: new THREE.MeshStandardMaterial({ color: 0x2bb54a, roughness: 0.6 }), wet: new THREE.MeshStandardMaterial({ color: 0x1e6fe0, roughness: 0.6 }),
   };
   return MODEL;
 }
@@ -145,8 +146,10 @@ export function makeCar({ color, accent, helmet = '#ffffff', number = 1, compoun
     acc: new THREE.MeshPhysicalMaterial({ color: accent, roughness: 0.35, metalness: 0.3, clearcoat: 0.8, clearcoatRoughness: 0.1 }),
     carbon: CARBON, dark: DARK, metal: METAL, light: LIGHT,
   };
+  const fwing = new THREE.Group(), rwing = new THREE.Group(); g.add(fwing, rwing);
   for (const k in M.merged) {
-    const m = new THREE.Mesh(M.merged[k], mats[k]); m.castShadow = k !== 'light'; m.receiveShadow = true; g.add(m);
+    const part = k.startsWith('fw_') ? fwing : k.startsWith('rw_') ? rwing : g, mk = k.replace(/^(fw|rw)_/, '');
+    const m = new THREE.Mesh(M.merged[k], mats[mk]); m.castShadow = mk !== 'light'; m.receiveShadow = true; part.add(m);
   }
   // race numbers on fin and nose
   const tex = numberTex(number, '#ffffff', 'rgba(0,0,0,.65)');
@@ -159,7 +162,7 @@ export function makeCar({ color, accent, helmet = '#ffffff', number = 1, compoun
   const vz = new THREE.Mesh(VISOR, VISOR_MAT);
   helmetMesh.add(hm, vz); g.add(helmetMesh);
   // wheels
-  const wheels = [];
+  const wheels = [], stripes = [];
   const wheel = (x, z, front) => {
     const W = front ? M.front : M.rear;
     const pivot = new THREE.Group(); pivot.position.set(x, front ? 0.36 : 0.37, z); g.add(pivot);
@@ -167,7 +170,7 @@ export function makeCar({ color, accent, helmet = '#ffffff', number = 1, compoun
     const t = new THREE.Mesh(W.tyre, M.wheelMats.tyre); t.castShadow = true; spin.add(t);
     spin.add(new THREE.Mesh(W.rim, M.wheelMats.rim));
     const face = new THREE.Mesh(W.face, M.wheelMats.face); face.position.x = Math.sign(x) * (W.w / 2 - 0.004); face.rotation.y = Math.sign(x) * Math.PI / 2; spin.add(face);
-    for (const s of [1, -1]) { const st = new THREE.Mesh(W.stripe, M.wheelMats[compound]); st.position.x = s * (W.w / 2 + 0.002); spin.add(st); }
+    for (const s of [1, -1]) { const st = new THREE.Mesh(W.stripe, M.wheelMats[compound]); st.position.x = s * (W.w / 2 + 0.002); spin.add(st); stripes.push(st); }
     wheels.push({ pivot, spin, front });
   };
   wheel(0.84, 1.66, true); wheel(-0.84, 1.66, true); wheel(0.83, -1.55, false); wheel(-0.83, -1.55, false);
@@ -179,8 +182,10 @@ export function makeCar({ color, accent, helmet = '#ffffff', number = 1, compoun
   steering.visible = false;
   // cockpit-only parts the camera would otherwise clip through
   const cockpitHide = [helmetMesh];
-  return { group: g, wheels, helmet: helmetMesh, steering, cockpitHide, mats, numTex: tex };
+  return { group: g, wheels, helmet: helmetMesh, steering, cockpitHide, mats, numTex: tex, stripes, fwing, rwing };
 }
+
+export function setCompound(c, comp) { const m = MODEL.wheelMats[comp] || MODEL.wheelMats.medium; c.stripes.forEach(s => s.material = m); }
 
 export function disposeCar(c) {
   c.mats.body.dispose(); c.mats.acc.dispose(); c.numTex.dispose();

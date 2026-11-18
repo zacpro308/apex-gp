@@ -242,6 +242,17 @@ function buildTrackData(def) {
     const side = sum > 0 ? -1 : 1;
     for (let i = s0 + 4; i <= e0 + 22; i++) gravel[i % N] = side;
   }
+  // pit lane alongside the start straight, on whichever side has more room
+  {
+    let back = 0; while (back < 140 && Math.abs(curv[(N - back - 1) % N]) < 1 / 300) back++;
+    let fwd = 0; while (fwd < 140 && Math.abs(curv[fwd % N]) < 1 / 300) fwd++;
+    const entry = (N - Math.max(55, back - 5)) % N, exit = Math.max(60, fwd - 5);
+    const range = []; for (let i = entry; i !== exit; i = (i + 1) % N) range.push(i);
+    const room = sd => Math.min(...range.map(i => sd > 0 ? T.limL[i] : T.limR[i]));
+    const side = room(1) >= room(-1) ? 1 : -1;
+    const lim = Math.max(...range.map(i => side > 0 ? T.limL[i] : T.limR[i]));
+    T.pit = { side, entry, exit, wall: lim, lat: side * (lim + 5.5), len: range.length, boxStart: 8, boxGap: 3 };
+  }
   return T;
 }
 

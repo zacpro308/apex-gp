@@ -4,6 +4,7 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { W, KERB, DS } from './tracks.js';
 import { rng, makeNoise, canvasTex, normalTex, noiseFill, smooth, clamp } from './util.js';
 
+const TMP_GREY = new THREE.Color('#8b939c');
 const AD_WORDS = ['APEX GP', 'NOVA FUEL', 'KITE TYRES', 'ORBITAL', 'HELIX', 'SUMMIT', 'VOLTA', 'RAPIDE', 'ZENITH', 'TORQUE+'];
 
 /* ---------------- shared textures ---------------- */
@@ -139,6 +140,7 @@ export class World {
     this.scene.fog = new THREE.FogExp2(th.fog, th.fogDensity);
     this.renderer.toneMappingExposure = th.exposure;
     this.bloomStrength = th.bloom; this.night = th.night;
+    this.base = { sun: this.sun.intensity, hemi: this.hemi.intensity, exposure: th.exposure, fog: th.fogDensity, fogColor: new THREE.Color(th.fog), turb: th.turbidity, ray: th.rayleigh, env: this.scene.environmentIntensity };
     this.sun.castShadow = q > 0;
     const sm = q >= 2 ? 4096 : 2048;
     if (this.sun.shadow.mapSize.x !== sm) { this.sun.shadow.mapSize.set(sm, sm); if (this.sun.shadow.map) { this.sun.shadow.map.dispose(); this.sun.shadow.map = null; } }
@@ -217,7 +219,7 @@ export class World {
 
     /* ----- track surface ----- */
     const roadCols = []; for (let c = 0; c <= 14; c++) { const o = W - c * (2 * W / 14); roadCols.push(col(o, 0.02, o / 6)); }
-    add(ribbon(T, 0, N, roadCols, 6, { colorFn: (i, o) => { const d = (o - T.race[i]) / 1.5; return 0.92 * (1 - 0.26 * Math.exp(-d * d)) * (Math.abs(o) > W - 0.9 ? 1.08 : 1); } }),
+    this.roadMesh = add(ribbon(T, 0, N, roadCols, 6, { colorFn: (i, o) => { const d = (o - T.race[i]) / 1.5; return 0.92 * (1 - 0.26 * Math.exp(-d * d)) * (Math.abs(o) > W - 0.9 ? 1.08 : 1); } }),
       new THREE.MeshStandardMaterial({ map: tx.asphalt, normalMap: tx.asphaltN, normalScale: new THREE.Vector2(0.6, 0.6), vertexColors: true, roughness: 0.86, metalness: 0, color: th.night ? '#c9ccd6' : '#ffffff' }));
     const lineMat = new THREE.MeshStandardMaterial({ color: '#f2f2f2', roughness: 0.6, map: tx.paint });
     for (const s of [1, -1]) add(ribbon(T, 0, N, [col(s * (W - 0.15), 0.035, 0), col(s * (W - 0.45), 0.035, 1)], 4), lineMat);
@@ -245,26 +247,35 @@ export class World {
         add(ribbon(T, a, b - a, [i => [s * (lim(i) - 0.55), 0, 0], i => [s * (lim(i) - 0.55), 1.0, 1]], 8, { up: false }), tyreMat, { cast: q > 0 });
       }
     }
-    // barriers: armco (circuits) or concrete with ad boards (streets), plus debris fence
+    // barriers: armco (circuits) or concrete with ad boards (streets), plus debris fence.
+    // On the pit side the wall has gaps at pit entry and exit; between them it becomes the pit wall.
+    const P = T.pit;
+    const segsFor = s => s !== P.side ? [[0, N]] : [[P.exit, (P.entry - P.exit + N) % N], [(P.entry + 40) % N, ((P.exit - 40) - (P.entry + 40) + 2 * N) % N]];
+    const inPitGap = (i, s) => s === P.side && (((i - P.entry + N) % N) < 40 || ((P.exit - i + N) % N) < 40) && ((i - P.entry + N) % N) <= P.len;
     for (const s of [1, -1]) {
       const lim = sideLim(T, s);
-      if (T.street) {
-        const adMat = new THREE.MeshStandardMaterial({ map: tx.adsWall, roughness: 0.6, emissive: th.night ? '#ffffff' : '#000000', emissiveMap: th.night ? tx.adsWall : null, emissiveIntensity: 0.3, side: THREE.DoubleSide });
-        add(ribbon(T, 0, N, [i => [s * lim(i), 0, 0], i => [s * lim(i), 1.15, 1]], 30, { up: false }), adMat, { cast: q > 0 });
-        add(ribbon(T, 0, N, [i => [s * lim(i), 1.15, 0], i => [s * (lim(i) + 0.5), 1.15, 1]], 8), new THREE.MeshStandardMaterial({ color: '#b8bcc4', roughness: 0.8 }));
-      } else {
-        const rail = new THREE.MeshStandardMaterial({ color: '#c3c8cf', roughness: 0.3, metalness: 0.85, side: THREE.DoubleSide });
-        add(ribbon(T, 0, N, [i => [s * lim(i), 0.45, 0], i => [s * lim(i), 0.78, 1]], 8, { up: false }), rail, { cast: q > 0 });
-        add(ribbon(T, 0, N, [i => [s * lim(i), 0.9, 0], i => [s * lim(i), 1.15, 1]], 8, { up: false }), rail);
-        const wallBand = new THREE.MeshStandardMaterial({ color: th.wallB, roughness: 0.6, side: THREE.DoubleSide });
-        add(ribbon(T, 0, N, [i => [s * (lim(i) + 0.05), 0, 0], i => [s * (lim(i) + 0.05), 0.45, 1]], 8, { up: false }), wallBand);
-      }
       const ft = tx.fence.clone(); ft.needsUpdate = true;
-      add(ribbon(T, 0, N, [i => [s * (lim(i) + 0.4), 1.15, 0], i => [s * (lim(i) + 0.4), 4.2, 1]], 3.05, { up: false }), new THREE.MeshStandardMaterial({ map: ft, alphaTest: 0.4, side: THREE.DoubleSide, roughness: 0.5, metalness: 0.6 }), { recv: false });
+      const fenceMat = new THREE.MeshStandardMaterial({ map: ft, alphaTest: 0.4, side: THREE.DoubleSide, roughness: 0.5, metalness: 0.6 });
+      const adMat = T.street ? new THREE.MeshStandardMaterial({ map: tx.adsWall, roughness: 0.6, emissive: th.night ? '#ffffff' : '#000000', emissiveMap: th.night ? tx.adsWall : null, emissiveIntensity: 0.3, side: THREE.DoubleSide }) : null;
+      const rail = new THREE.MeshStandardMaterial({ color: '#c3c8cf', roughness: 0.3, metalness: 0.85, side: THREE.DoubleSide });
+      const wallBand = new THREE.MeshStandardMaterial({ color: th.wallB, roughness: 0.6, side: THREE.DoubleSide });
+      const capMat = new THREE.MeshStandardMaterial({ color: '#b8bcc4', roughness: 0.8 });
+      for (const [i0, cnt] of segsFor(s)) {
+        if (cnt < 2) continue;
+        if (T.street) {
+          add(ribbon(T, i0, cnt, [i => [s * lim(i), 0, 0], i => [s * lim(i), 1.15, 1]], 30, { up: false }), adMat, { cast: q > 0 });
+          add(ribbon(T, i0, cnt, [i => [s * lim(i), 1.15, 0], i => [s * (lim(i) + 0.5), 1.15, 1]], 8), capMat);
+        } else {
+          add(ribbon(T, i0, cnt, [i => [s * lim(i), 0.45, 0], i => [s * lim(i), 0.78, 1]], 8, { up: false }), rail, { cast: q > 0 });
+          add(ribbon(T, i0, cnt, [i => [s * lim(i), 0.9, 0], i => [s * lim(i), 1.15, 1]], 8, { up: false }), rail);
+          add(ribbon(T, i0, cnt, [i => [s * (lim(i) + 0.05), 0, 0], i => [s * (lim(i) + 0.05), 0.45, 1]], 8, { up: false }), wallBand);
+        }
+        add(ribbon(T, i0, cnt, [i => [s * (lim(i) + 0.4), 1.15, 0], i => [s * (lim(i) + 0.4), 4.2, 1]], 3.05, { up: false }), fenceMat, { recv: false });
+      }
     }
     // posts (instanced)
     {
-      const posts = []; for (let i = 0; i < N; i += 3) for (const s of [1, -1]) posts.push([i, s]);
+      const posts = []; for (let i = 0; i < N; i += 3) for (const s of [1, -1]) if (!inPitGap(i, s)) posts.push([i, s]);
       const im = new THREE.InstancedMesh(new THREE.BoxGeometry(0.1, 4.2, 0.1).translate(0, 2.1, 0), new THREE.MeshStandardMaterial({ color: '#8b9099', roughness: 0.5, metalness: 0.6 }), posts.length);
       const m = new THREE.Matrix4();
       posts.forEach(([i, s], k) => { const l = (s > 0 ? T.limL[i] : T.limR[i]) + 0.45; m.makeTranslation(T.px[i] + T.nx[i] * s * l, 0, T.pz[i] + T.nz[i] * s * l); im.setMatrixAt(k, m); });
@@ -328,32 +339,38 @@ export class World {
         this.gantryLights.push(mat);
       }
     }
-    // pit building on the side of the start straight with most room, grandstands opposite
+    // pit lane, garages and team boxes alongside the start straight
     {
-      const range = [];
-      for (let k = -45; k <= 90; k++) range.push((k + N) % N);
-      const room = s => Math.min(...range.map(i => s > 0 ? T.limL[i] : T.limR[i]));
-      const pitSide = room(1) >= room(-1) ? 1 : -1;
-      if (room(pitSide) >= T.wallOff - 0.5 || T.street) {
-        const d = new THREE.Object3D(); const segs = range.filter((_, k) => k % 6 === 0);
-        const mkIM = (geo, mat) => { const im = new THREE.InstancedMesh(geo, mat, segs.length); im.castShadow = q > 0; im.receiveShadow = true; G.add(im); return im; };
-        const lower = mkIM(new THREE.BoxGeometry(14, 6, 12.4).translate(0, 3, 0), white);
-        const door = mkIM(new THREE.PlaneGeometry(10.5, 4.6).translate(0, 2.3, 0), new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.5 }));
-        const upper = mkIM(new THREE.BoxGeometry(14, 4, 12.4).translate(0, 8, 0), new THREE.MeshPhysicalMaterial({ color: '#1e2a38', roughness: 0.08, metalness: 0.5, emissive: th.night ? '#ffd9a0' : '#000000', emissiveIntensity: th.night ? 0.25 : 0 }));
-        const roof = mkIM(new THREE.BoxGeometry(17, 0.5, 12.4).translate(0, 10.25, 0), white);
-        const tc = new THREE.Color();
-        segs.forEach((i, k) => {
-          const lat = pitSide * ((pitSide > 0 ? T.limL[i] : T.limR[i]) + 22);
-          d.position.set(T.px[i] + T.nx[i] * lat, 0, T.pz[i] + T.nz[i] * lat); d.rotation.set(0, Math.atan2(T.tx[i], T.tz[i]) + Math.PI / 2, 0); d.scale.set(1, 1, 1); d.updateMatrix();
-          lower.setMatrixAt(k, d.matrix); upper.setMatrixAt(k, d.matrix); roof.setMatrixAt(k, d.matrix);
-          const dd = d.clone(); dd.translateX(-pitSide * 7.02); dd.rotateY(-pitSide * Math.PI / 2); dd.updateMatrix(); door.setMatrixAt(k, dd.matrix);
-          tc.set(teamColors[Math.floor(k / 2) % teamColors.length]); door.setColorAt(k, tc);
-        });
-        // pit lane asphalt + pit wall
-        const lim = sideLim(T, pitSide);
-        add(ribbon(T, range[0], range.length - 1, [i => [pitSide * (lim(i) + 0.5), 0.015, 0], i => [pitSide * (lim(i) + 15), 0.015, 2]], 6), new THREE.MeshStandardMaterial({ map: tx.asphalt, color: '#9a9ca3', roughness: 0.9 }));
-        add(ribbon(T, range[0], range.length - 1, [i => [pitSide * (lim(i) + 15), 0.015, 0], i => [pitSide * (lim(i) + 15.3), 0.015, 1]], 4), lineMat);
+      const ps = P.side, range = []; for (let i = P.entry; i !== P.exit; i = (i + 1) % N) range.push(i);
+      const outer = Math.abs(P.lat) + 4.5;
+      const pitMat = new THREE.MeshStandardMaterial({ map: tx.asphalt, color: '#a3a6ad', roughness: 0.9 });
+      add(ribbon(T, P.entry, range.length, [() => [ps * (W + KERB), 0.016, 0], () => [ps * outer, 0.016, 2]], 6), pitMat);
+      add(ribbon(T, P.entry, range.length, [() => [ps * (outer - 7.2), 0.02, 0], () => [ps * (outer - 7.0), 0.02, 1]], 4), lineMat);
+      const conc = new THREE.MeshStandardMaterial({ color: '#c9cdd3', roughness: 0.85, side: THREE.DoubleSide });
+      add(ribbon(T, P.entry, range.length, [() => [ps * outer, 0, 0], () => [ps * outer, 1.1, 1]], 8, { up: false }), conc);
+      // team boxes
+      const boxMat = new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.7 });
+      const tc = new THREE.Color(), d = new THREE.Object3D();
+      const boxes = new THREE.InstancedMesh(new THREE.PlaneGeometry(3.2, 5.6).rotateX(-Math.PI / 2), boxMat, teamColors.length + 1);
+      for (let k = 0; k <= teamColors.length; k++) {
+        const i = (P.boxStart + k * P.boxGap) % N; d.position.set(T.px[i] + T.nx[i] * P.lat, 0.025, T.pz[i] + T.nz[i] * P.lat); d.rotation.set(0, Math.atan2(T.tx[i], T.tz[i]), 0); d.updateMatrix();
+        boxes.setMatrixAt(k, d.matrix); tc.set(k === teamColors.length ? '#ffcc00' : teamColors[k]).multiplyScalar(0.8); boxes.setColorAt(k, tc);
       }
+      boxes.receiveShadow = true; G.add(boxes);
+      const segs = range.filter((_, k) => k % 6 === 0 && k > 30 && k < range.length - 30);
+      const mkIM = (geo, mat) => { const im = new THREE.InstancedMesh(geo, mat, Math.max(1, segs.length)); im.castShadow = q > 0; im.receiveShadow = true; G.add(im); return im; };
+      const lower = mkIM(new THREE.BoxGeometry(14, 6, 12.4).translate(0, 3, 0), white);
+      const door = mkIM(new THREE.PlaneGeometry(10.5, 4.6).translate(0, 2.3, 0), new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.5 }));
+      const upper = mkIM(new THREE.BoxGeometry(14, 4, 12.4).translate(0, 8, 0), new THREE.MeshPhysicalMaterial({ color: '#1e2a38', roughness: 0.08, metalness: 0.5, emissive: th.night ? '#ffd9a0' : '#000000', emissiveIntensity: th.night ? 0.25 : 0 }));
+      const roof = mkIM(new THREE.BoxGeometry(17, 0.5, 12.4).translate(0, 10.25, 0), white);
+      segs.forEach((i, k) => {
+        const lat = ps * (outer + 6.3);
+        d.position.set(T.px[i] + T.nx[i] * lat, 0, T.pz[i] + T.nz[i] * lat); d.rotation.set(0, Math.atan2(T.tx[i], T.tz[i]) + Math.PI / 2, 0); d.updateMatrix();
+        lower.setMatrixAt(k, d.matrix); upper.setMatrixAt(k, d.matrix); roof.setMatrixAt(k, d.matrix);
+        const dd = d.clone(); dd.translateX(-ps * 7.02); dd.rotateY(-ps * Math.PI / 2); dd.updateMatrix(); door.setMatrixAt(k, dd.matrix);
+        tc.set(teamColors[Math.floor(k / 2) % teamColors.length]); door.setColorAt(k, tc);
+      });
+      const pitSide = ps;
       // grandstands
       const stand = (i, s, L) => {
         const lim = s > 0 ? T.limL[i] : T.limR[i]; const fr = frameAt(i, s * (lim + 4)); G.add(fr);
@@ -459,6 +476,19 @@ export class World {
       const geo = new THREE.BoxGeometry(1, 1, 1).translate(0, 0.5, 0);
       inst(geo, mat, near.concat(far), (d, p) => { const fr = p[3] > 450; d.rotation.y = r() * 6; d.scale.set(16 + r() * 26, fr ? 50 + Math.pow(r(), 2) * 230 : 14 + Math.pow(r(), 2) * 90, 16 + r() * 26); }, { colors: pal });
     }
+  }
+
+  /* rain: 0..1 falling rain near the player, wet: 0..1 standing water near the player */
+  setWeather(rain, wet) {
+    const b = this.base; if (!b) return;
+    const rm = this.roadMesh && this.roadMesh.material;
+    if (rm) { rm.roughness = 0.86 - 0.62 * wet; rm.metalness = 0.15 * wet; rm.color.setScalar(this.night ? 0.79 - 0.25 * wet : 1 - 0.38 * wet); }
+    this.sun.intensity = b.sun * (1 - 0.7 * rain); this.hemi.intensity = b.hemi * (1 + 0.6 * rain);
+    this.scene.environmentIntensity = b.env * (1 - 0.45 * rain);
+    this.renderer.toneMappingExposure = b.exposure * (1 - 0.38 * rain);
+    if (this.scene.fog) { this.scene.fog.density = b.fog * (1 + 3 * rain); this.scene.fog.color.copy(b.fogColor).lerp(TMP_GREY, 0.7 * rain); }
+    if (!this.night) { const u = this.sky.material.uniforms; u.turbidity.value = b.turb + 20 * rain; u.rayleigh.value = b.ray * (1 - 0.95 * rain); u.mieCoefficient.value = 0.004 + 0.03 * rain; }
+    if (this.clouds) { this.clouds.material.opacity = Math.min(1, 0.7 + 0.6 * rain); this.clouds.material.color.setScalar(1 - 0.65 * rain); }
   }
 
   setRaceLine(on) { this.showLine = on; if (this.raceLine) this.raceLine.visible = on; }
