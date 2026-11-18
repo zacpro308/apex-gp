@@ -60,6 +60,27 @@ button{font-family:inherit;cursor:pointer}
 #startLights .pod i{width:34px;height:34px;border-radius:50%;background:#2a0b0b}
 #startLights .pod.on i{background:#ff2020;box-shadow:0 0 18px #ff2020}
 
+#radio{position:absolute;right:16px;top:180px;width:330px;display:flex;flex-direction:column;gap:8px}
+.rmsg{background:rgba(10,12,18,.84);border:1px solid var(--line);border-left:5px solid #3d8bff;border-radius:8px;padding:8px 12px;font-size:18px;font-weight:600;line-height:1.25;animation:slidein .35s ease;transition:opacity .5s,transform .5s}
+.rmsg .who{display:block;font-size:12px;letter-spacing:.14em;color:var(--muted);font-weight:700;margin-bottom:2px}
+.rmsg.warn{border-left-color:#f5b400}.rmsg.bad{border-left-color:var(--red)}.rmsg.good{border-left-color:var(--green)}
+.rmsg.out{opacity:0;transform:translateX(30px)}
+@keyframes slidein{from{opacity:0;transform:translateX(40px)}to{opacity:1;transform:none}}
+#drs{position:absolute;left:50%;bottom:150px;transform:translateX(-50%);padding:6px 16px;border-radius:8px;font-size:22px;font-weight:800;letter-spacing:.08em;white-space:nowrap}
+#drs.off{background:rgba(10,12,18,.75);color:#cfd5de;border:2px solid #4a5160}
+#drs.armed{background:rgba(10,30,14,.85);color:#4dff86;border:2px solid #22e05a}
+#drs.open{background:#22e05a;color:#04130a;border:2px solid #22e05a;box-shadow:0 0 18px #22e05a}
+#penTag{position:absolute;left:16px;top:94px;padding:2px 10px;border-radius:6px;background:rgba(160,20,20,.85);font-size:15px;font-weight:700;letter-spacing:.06em}
+#board{top:126px}
+#board .r i{font-style:normal;font-size:12px;font-weight:800;padding:0 4px;border-radius:3px;margin-left:3px}
+#board .r i.d{background:#22e05a;color:#04130a}#board .r i.pen{background:var(--red);color:#fff}
+.pen{color:var(--red);font-weight:700}
+input[type=range]{width:100%;accent-color:var(--acc);height:22px}
+#splash{position:fixed;inset:0;z-index:100;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:34px;background:radial-gradient(ellipse at center,#1a1c26 0,#06070b 70%)}
+#splash .logo{font-size:96px}
+#splash .warn{font-size:clamp(40px,7vw,88px);font-weight:800;font-style:italic;text-align:center;line-height:1.02;color:#fff;text-shadow:0 0 40px rgba(255,204,0,.25)}
+#acceptBtn{font-size:34px;padding:16px 56px}
+
 /* Overlays */
 .overlay{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(5,6,10,.55);backdrop-filter:blur(4px)}
 .card{padding:26px 30px;min-width:360px;max-width:94vw;max-height:94vh;overflow:auto}
@@ -144,6 +165,9 @@ table.res tr.me td{background:rgba(255,204,0,.16);color:var(--acc);font-weight:7
   <div id="mapWrap" class="panel"><canvas id="minimap" width="400" height="400"></canvas></div>
   <div id="camTag" class="panel">CAMERA <b id="camName">CHASE</b> · C to switch · ESC pause</div>
   <div id="wrongway" class="hidden">WRONG WAY</div>
+  <div id="radio"></div>
+  <div id="drs" class="hidden"></div>
+  <div id="penTag" class="hidden"></div>
   <div id="startLights" class="panel hidden"></div>
   <div id="msg"></div>
 </div>
@@ -154,11 +178,11 @@ table.res tr.me td{background:rgba(255,204,0,.16);color:var(--acc);font-weight:7
     <div class="opt panel"><h4>Mode</h4><div class="seg" data-opt="mode"><button data-v="race">Quick Race</button><button data-v="champ">Championship</button><button data-v="tt">Time Trial</button></div></div>
     <div class="opt panel hidden" id="seasonBox"><h4>Season</h4><div id="seasonInfo"></div><button class="btn" id="newSeason">Start a new season</button></div>
     <div class="opt panel" id="optLaps"><h4>Laps</h4><div class="seg" data-opt="laps"><button data-v="3">3</button><button data-v="5">5</button><button data-v="10">10</button></div></div>
-    <div class="opt panel" id="optOpp"><h4>Rivals</h4><div class="seg" data-opt="opp"><button data-v="5">5</button><button data-v="9">9</button><button data-v="15">15</button></div></div>
-    <div class="opt panel" id="optDiff"><h4>AI Difficulty</h4><div class="seg" data-opt="diff"><button data-v="easy">Easy</button><button data-v="medium">Medium</button><button data-v="hard">Hard</button></div></div>
-    <div class="opt panel"><h4>Graphics</h4><div class="seg" data-opt="gfx"><button data-v="0">Low</button><button data-v="1">High</button><button data-v="2">Ultra</button></div></div>
+    <div class="opt panel" id="optOpp"><h4>Rivals</h4><div class="seg" data-opt="opp"><button data-v="5">5</button><button data-v="9">9</button><button data-v="15">15</button><button data-v="21">21 (full grid)</button></div></div>
+    <div class="opt panel" id="optDiff"><h4>AI Skill <b id="aiVal" style="color:var(--text);font-size:18px;margin-left:6px">50</b><span style="color:var(--muted);text-transform:none;letter-spacing:0;margin-left:8px" id="aiDesc"></span></h4><input type="range" id="aiSlider" min="0" max="100" step="1" value="50"></div>
+    <div class="opt panel"><h4>Racing Line <span style="text-transform:none;letter-spacing:0">(L in race)</span></h4><div class="seg" data-opt="line"><button data-v="off">Off</button><button data-v="on">On</button></div></div>
     <div class="opt panel"><h4>Your Livery</h4><div class="swatches" id="swatches"></div></div>
-    <div class="opt panel"><h4>Controls</h4><div class="keys"><kbd>W</kbd> Throttle &nbsp; <kbd>S</kbd> Brake / reverse<br><kbd>A</kbd> <kbd>D</kbd> Steer &nbsp; <kbd>C</kbd> Camera &nbsp; <kbd>ESC</kbd> Pause &nbsp; <kbd>M</kbd> Mute</div></div>
+    <div class="opt panel"><h4>Controls</h4><div class="keys"><kbd>W</kbd> Throttle &nbsp; <kbd>S</kbd> Brake / reverse<br><kbd>A</kbd> <kbd>D</kbd> Steer &nbsp; <kbd>C</kbd> Camera &nbsp; <kbd>L</kbd> Racing line<br><kbd>ESC</kbd> Pause &nbsp; <kbd>M</kbd> Mute &nbsp; DRS opens automatically</div></div>
     <button class="btn primary" id="startBtn">Start Race</button>
   </div>
   <div></div>
@@ -179,6 +203,12 @@ table.res tr.me td{background:rgba(255,204,0,.16);color:var(--acc);font-weight:7
 </div></div>
 
 <div id="loading" class="hidden"><span>LOADING CIRCUIT</span></div>
+
+<div id="splash">
+  <div class="logo">APEX<span>GP</span></div>
+  <div class="warn">THIS GAME IS FOR<br>BREAK TIME ONLY</div>
+  <button class="btn primary" id="acceptBtn">I ACCEPT</button>
+</div>
 
 <script type="importmap">
 { "imports": {

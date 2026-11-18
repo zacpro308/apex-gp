@@ -188,14 +188,42 @@ function buildTrackData(def) {
     const d = Math.hypot(bx - ax, bz - az) * Math.hypot(cx - bx, cz - bz) * Math.hypot(cx - ax, cz - az);
     kr[i] = d > 0 ? Math.abs(2 * cross / d) : 0;
   }
-  const vprof = T.vprof = F();
+  const vcorner = F();
   for (let i = 0; i < N; i++) {
     let k = 0; for (let j = -3; j <= 3; j++) k = Math.max(k, kr[(i + j + N) % N]);
-    vprof[i] = k > 1e-5 ? Math.min(95, (0.25 + Math.sqrt(0.0625 + 4 * k * 18)) / (2 * k)) : 95;
+    vcorner[i] = k > 1e-5 ? Math.min(95, (0.25 + Math.sqrt(0.0625 + 4 * k * 18)) / (2 * k)) : 95;
   }
-  for (let pass = 0; pass < 3; pass++) for (let i = N - 1; i >= 0; i--) {
-    const nv = vprof[(i + 1) % N], lim = Math.sqrt(nv * nv + 2 * 24 * DS);
-    if (vprof[i] > lim) vprof[i] = lim;
+  // braking profiles: cautious (most AI) and late-braking (top-level AI)
+  const brakeProfile = brk => {
+    const v = Float32Array.from(vcorner);
+    for (let pass = 0; pass < 3; pass++) for (let i = N - 1; i >= 0; i--) {
+      const nv = v[(i + 1) % N], lim = Math.sqrt(nv * nv + 2 * brk * DS);
+      if (v[i] > lim) v[i] = lim;
+    }
+    return v;
+  };
+  T.vprof = brakeProfile(24);
+  T.vprof2 = brakeProfile(32);
+
+  // DRS: the longest straights get a zone, with a detection point 150 m before activation
+  {
+    // flowing tracks may have no dead-straight sections, so relax the threshold until zones appear
+    let runs = [], s0 = 0;
+    for (const R of [700, 450, 300]) {
+      s0 = 0; while (s0 < N && Math.abs(curv[s0]) < 1 / R) s0++;
+      runs = []; let rs = -1;
+      for (let k = 0; k <= N; k++) {
+        const i = (s0 + k) % N, st = k < N && Math.abs(curv[i]) < 1 / R;
+        if (st && rs < 0) rs = k;
+        if (!st && rs >= 0) { if (k - rs >= 110) runs.push([rs, k - 1]); rs = -1; }
+      }
+      if (runs.length >= 2 || (runs.length && R === 300)) break;
+    }
+    runs.sort((a, b) => (b[1] - b[0]) - (a[1] - a[0]));
+    T.drs = runs.slice(0, N > 1800 ? 3 : 2).map(([a, b]) => {
+      const start = (s0 + a + 15) % N, end = (s0 + b - 5) % N;
+      return { start, end, detect: (start - 75 + N) % N, len: (b - a - 20) * DS };
+    }).sort((a, b) => a.start - b.start);
   }
 
   // corners → kerbs, gravel on the outside

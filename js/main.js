@@ -22,16 +22,24 @@ const TEAMS = [
   { name: 'Vermilion Works', color: '#dc2626', accent: '#fde68a' },
   { name: 'Pinnacle Engineering', color: '#22c55e', accent: '#f8fafc' },
   { name: 'Atlas Velocity', color: '#ec4899', accent: '#1e1b4b' },
+  { name: 'Northstar GP', color: '#1e3a8a', accent: '#fbbf24' },
+  { name: 'Granite Motorsport', color: '#9ca3af', accent: '#dc2626' },
+  { name: 'Copperline Racing', color: '#b45309', accent: '#0a0a0a' },
 ];
 const DRIVERS = [
   ['Marco Ferrante', 'FER'], ['Lena Hoffmann', 'HOF'], ['Kai Tanaka', 'TAN'], ['Rafael Duarte', 'DUA'],
   ['Sofia Lindqvist', 'LIN'], ['Theo Marchetti', 'MAR'], ['Amara Okafor', 'OKA'], ['Jonas Brandt', 'BRA'],
   ['Elise Moreau', 'MOR'], ['Diego Salvador', 'SAL'], ['Niko Virtanen', 'VIR'], ['Priya Raman', 'RAM'],
   ['Oscar Whitfield', 'WHI'], ['Yuki Mori', 'MRI'], ['Felix Arnaud', 'ARN'], ['Mateo Rojas', 'ROJ'],
+  ['Lucas Bremer', 'BRE'], ['Isabela Costa', 'COS'], ['Hugo Lefevre', 'LEF'], ['Anya Petrova', 'PET'],
+  ['Tom Ashworth', 'ASH'], ['Kenji Arai', 'ARA'],
 ];
+const CAR_NUMS = [4, 7, 11, 14, 16, 22, 27, 31, 33, 44, 55, 63, 77, 81, 88, 99, 3, 5, 10, 12, 18, 23];
+const teamOf = di => TEAMS[Math.floor(di / 2) % TEAMS.length];
 const LIVERIES = ['#ffcc00', '#f8fafc', '#ef4444', '#3b82f6', '#10b981', '#a855f7', '#111827'];
-const POINTS = [20, 16, 13, 11, 9, 7, 5, 3, 2, 1];
-const DIFF = { easy: 0.86, medium: 0.925, hard: 0.975 };
+const POINTS = [25, 18, 15, 12, 10, 8, 6, 4, 2, 1];
+// AI skill 0-100 → fraction of the car's true cornering limit. 100 also brakes much later.
+const aiPace = s => 0.8 + 0.2 * Math.pow(clamp(s, 0, 100) / 100, 0.8);
 const GEARS = [0, 22, 33, 44, 54, 64, 74, 84, 200];
 const CAMS = ['COCKPIT', 'T-CAM', 'CHASE'];
 
@@ -48,8 +56,10 @@ const sparks = new Particles(scene, 500, true);
 const skids = new Skids(scene);
 let composer = null, bloom = null;
 
-const settings = Object.assign({ track: 0, mode: 'race', laps: 3, opp: 9, diff: 'medium', livery: 0, gfx: 1 }, store.json('apexgp2-settings', {}));
+const settings = Object.assign({ track: 0, mode: 'race', laps: 3, opp: 9, ai: 50, line: 'off', livery: 0 }, store.json('apexgp2-settings', {}));
 if (settings.track >= TRACKS.length) settings.track = 0;
+if (typeof settings.diff === 'string') { settings.ai = { easy: 25, medium: 50, hard: 72 }[settings.diff] ?? 50; delete settings.diff; }
+settings.gfx = 0; // graphics are fixed on Low for performance
 const saveSettings = () => store.set('apexgp2-settings', JSON.stringify(settings));
 
 function setupPost() {
@@ -115,7 +125,7 @@ function saveSeason(s) { store.set('apexgp2-season', JSON.stringify(s)); }
 function newSeason() {
   const r = rng(Date.now() & 0xfffff);
   const order = DRIVERS.map((d, i) => i).sort(() => r() - 0.5).slice(0, settings.opp);
-  const s = { round: 0, laps: settings.laps, diff: settings.diff, opp: settings.opp, lineup: order.map(di => ({ di, rating: 0.96 + r() * 0.035 })), pts: {}, finished: false };
+  const s = { round: 0, laps: settings.laps, ai: settings.ai, opp: settings.opp, lineup: order.map(di => ({ di, rating: 0.985 + r() * 0.02 })), pts: {}, finished: false };
   s.pts.YOU = 0; order.forEach(di => s.pts[DRIVERS[di][1]] = 0);
   saveSeason(s); return s;
 }
@@ -135,15 +145,17 @@ function setupRace() {
   const T = game.T = buildTrack(settings.track);
   clearCars();
   const tt = settings.mode === 'tt';
-  const laps = champ ? game.season.laps : settings.laps, diff = champ ? game.season.diff : settings.diff;
-  game.laps = tt ? Infinity : laps;
+  const laps = champ ? game.season.laps : settings.laps;
+  const skill = champ ? (game.season.ai ?? 50) : settings.ai;
+  game.laps = tt ? Infinity : laps; game.skill = skill;
   const r = rng((Date.now() & 0xffff) + 1);
   let lineup;
   if (champ) lineup = game.season.lineup.slice();
   else if (tt) lineup = [];
-  else lineup = DRIVERS.map((d, i) => i).sort(() => r() - 0.5).slice(0, settings.opp).map(di => ({ di, rating: 0.96 + r() * 0.035 }));
+  else lineup = DRIVERS.map((d, i) => i).sort(() => r() - 0.5).slice(0, settings.opp).map(di => ({ di, rating: 0.985 + r() * 0.02 }));
   lineup.sort(() => r() - 0.5);
-  const n = lineup.length + 1, playerSlot = tt ? 0 : Math.floor(n * 0.55), base = DIFF[diff];
+  const n = lineup.length + 1, playerSlot = tt ? 0 : Math.floor(n * 0.55), base = aiPace(skill);
+  game.drsCross = T.drs.map(() => ({}));
   let ai = 0;
   for (let s = 0; s < n; s++) {
     const isP = s === playerSlot; let c;
@@ -151,9 +163,9 @@ function setupRace() {
       const colr = LIVERIES[settings.livery];
       c = Object.assign(makeCar({ color: colr, accent: colr === '#111827' ? '#ffcc00' : '#111827', helmet: '#ffffff', number: 1, compound: 'soft' }), { name: 'You', code: 'YOU', team: 'Your Team', color: colr, isPlayer: true, pace: 1 });
     } else {
-      const L = lineup[ai++], di = L.di, tm = TEAMS[Math.floor(di / 2) % TEAMS.length];
-      c = Object.assign(makeCar({ color: tm.color, accent: tm.accent, helmet: ['#ffffff', '#ffcc00', '#ff4d4d', '#4da6ff'][di % 4], number: [4, 7, 11, 14, 16, 22, 27, 31, 33, 44, 55, 63, 77, 81, 88, 99][di], compound: ['soft', 'medium', 'hard'][di % 3] }),
-        { name: DRIVERS[di][0], code: DRIVERS[di][1], team: tm.name, color: tm.color, isPlayer: false, pace: base * L.rating * (1 - (s / n) * 0.02) });
+      const L = lineup[ai++], di = L.di, tm = teamOf(di);
+      c = Object.assign(makeCar({ color: tm.color, accent: tm.accent, helmet: ['#ffffff', '#ffcc00', '#ff4d4d', '#4da6ff'][di % 4], number: CAR_NUMS[di], compound: ['soft', 'medium', 'hard'][di % 3] }),
+        { name: DRIVERS[di][0], code: DRIVERS[di][1], team: tm.name, color: tm.color, isPlayer: false, pace: Math.min(1.0, base * L.rating), lateBrake: skill >= 75 });
     }
     const back = 8 + s * 8, idx = (T.N - Math.round(back / DS)) % T.N, lane = (s % 2 === 0 ? 1 : -1) * 3.2;
     Object.assign(c, {
@@ -161,12 +173,15 @@ function setupRace() {
       idx, prog: idx - T.N, lat: lane, surf: 0, maxDone: -1, lapStart: 0, lastLap: 0, bestLap: Infinity, lapInvalid: false, lapTimes: [],
       finished: false, finishTime: 0, splits: {}, lastBucket: -1e9, laneOff: lane - T.race[idx], laneTarget: (r() - 0.5) * 1.2, blockT: 0,
       startDelay: isP ? 0 : 0.12 + r() * 0.35, autopilot: false, inp: { throttle: 0, brake: 0, steer: 0 }, gear: 0, rpm: 4000, wheelRot: 0, hitT: 0, scrub: 0, sparkT: r(),
+      drsArmed: -1, drsOpen: false, drsGap: Infinity, offLimits: false, strikes: 0, penalty: 0, contactT: 0,
     });
     c.group.position.set(c.x, 0, c.z); c.group.rotation.y = c.h;
     scene.add(c.group); game.cars.push(c);
     if (isP) game.player = c;
   }
   game.player.steering.visible = true;
+  world.setRaceLine(settings.line === 'on');
+  $('radio').innerHTML = ''; $('penTag').classList.add('hidden');
   game.phase = 'lights'; game.lightsT = 0; game.goAt = 5.6 + r() * 1.4; game.raceTime = 0; game.finishCount = 0; game.paused = false; game.resultsAt = 0;
   game.state = 'race'; game.record = recordFor(T);
   world.setStartLights(0);
@@ -197,13 +212,13 @@ function stepCar(c, inp, dt, T) {
   let v = c.v;
   if (inp.throttle > 0) {
     if (v < -0.2) v += 28 * dt * inp.throttle;
-    else { const f = 1 - Math.pow(Math.max(v, 0) / VMAX, 2); v += 11.5 * inp.throttle * Math.max(f, 0) * (surf >= 3 ? 0.55 : 1) * dt; }
+    else { const vm = c.drsOpen ? VMAX * 1.03 : VMAX, f = 1 - Math.pow(Math.max(v, 0) / vm, 2); v += 11.5 * inp.throttle * Math.max(f, 0) * (surf >= 3 ? 0.55 : 1) * dt; }
   }
   if (inp.brake > 0) {
     if (v > 0.4) v = Math.max(0, v - 36 * grip * inp.brake * dt);
     else if (inp.throttle === 0) v = Math.max(v - 7 * dt, -12);
   }
-  const dec = (0.3 + 0.00028 * v * v + (inp.throttle === 0 ? 1.2 : 0) + DRAG[surf] * Math.abs(v)) * dt;
+  const dec = (0.3 + (c.drsOpen ? 0.00022 : 0.00028) * v * v + (inp.throttle === 0 ? 1.2 : 0) + DRAG[surf] * Math.abs(v)) * dt;
   if (v > 0) v = Math.max(0, v - dec); else if (v < 0) v = Math.min(0, v + dec);
   const sp = Math.abs(v), geo = sp * Math.tan(0.42) / 3.6, dyn = (18 + 0.25 * sp) * grip / Math.max(sp, 1);
   c.h += inp.steer * Math.min(geo, dyn) * (v < 0 ? -1 : 1) * dt;
@@ -258,12 +273,17 @@ function aiInput(c, dt, T) {
   }
   c.laneOff += (c.laneTarget - c.laneOff) * Math.min(1, dt * 1.6);
   const ti = (c.idx + Math.round((10 + Math.max(c.v, 10) * 0.42) / DS)) % N;
-  const off = clamp(T.race[ti] + c.laneOff, -(W - 1.2), W - 1.2);
+  let off = clamp(T.race[ti] + c.laneOff, -(W - 1.2), W - 1.2);
+  // running wide: aim back inside and ease off so the AI respects track limits
+  const wide = Math.abs(c.lat) - (W - 0.4);
+  if (wide > 0) off -= Math.sign(c.lat) * Math.min(3, wide * 2);
   const err = angDiff(Math.atan2(T.px[ti] + T.nx[ti] * off - c.x, T.pz[ti] + T.nz[ti] * off - c.z), c.h);
   c.steer += clamp(clamp(err * 2.6, -1, 1) - c.steer, -8 * dt, 8 * dt);
   let target = Infinity;
-  for (let k = 1; k <= 6; k++) target = Math.min(target, T.vprof[(c.idx + k) % N]);
+  const prof = c.lateBrake ? T.vprof2 : T.vprof;
+  for (let k = 1; k <= 6; k++) target = Math.min(target, prof[(c.idx + k) % N]);
   target = Math.min(target * c.pace, follow);
+  if (wide > 0) target = Math.min(target, c.v * (1 - Math.min(0.08, wide * 0.03)));
   if (c.surf >= 3) target = Math.min(target, 35);
   let throttle = 0, brake = 0;
   if (c.v < target - 0.8) throttle = 1; else if (c.v > target + 1.2) brake = clamp((c.v - target) / 5, 0.25, 1); else throttle = 0.35;
@@ -285,16 +305,71 @@ function collide() {
     const { d, dx, dz } = best, push = (2.15 - d) / 2;
     A.x -= dx * push; A.z -= dz * push; B.x += dx * push; B.z += dz * push;
     const aInto = fa[0] * dx + fa[1] * dz, bInto = -(fb[0] * dx + fb[1] * dz);
-    if (aInto > 0.5 && A.v > B.v) { const dv = A.v - B.v; A.v -= dv * 0.6; B.v += dv * 0.3; if (dv > 6) A.hitT = B.hitT = Math.min(1, dv / 25); }
-    else if (bInto > 0.5 && B.v > A.v) { const dv = B.v - A.v; B.v -= dv * 0.6; A.v += dv * 0.3; if (dv > 6) A.hitT = B.hitT = Math.min(1, dv / 25); }
+    if (aInto > 0.5 && A.v > B.v) { const dv = A.v - B.v; A.v -= dv * 0.6; B.v += dv * 0.3; if (dv > 6) { A.hitT = B.hitT = Math.min(1, dv / 25); contactFault(A, B, dv); } }
+    else if (bInto > 0.5 && B.v > A.v) { const dv = B.v - A.v; B.v -= dv * 0.6; A.v += dv * 0.3; if (dv > 6) { A.hitT = B.hitT = Math.min(1, dv / 25); contactFault(B, A, dv); } }
     else { const side = (x, z, h) => Math.cos(h) * x - Math.sin(h) * z; A.h += clamp(side(-dx, -dz, A.h), -1, 1) * 0.002; B.h += clamp(side(dx, dz, B.h), -1, 1) * 0.002; }
+  }
+}
+
+/* ---------------- Race rules: contact, track limits, DRS ---------------- */
+const racing = () => settings.mode !== 'tt' && game.phase === 'race';
+function addPenalty(c, secs, why) {
+  c.penalty += secs;
+  if (c.isPlayer) { radio(secs + ' second time penalty: ' + why + '.', 'bad'); updatePenTag(); }
+  else if (positionOf(c) <= positionOf(game.player) + 3) radio(c.code + ' gets a ' + secs + 's penalty for ' + why + '.', 'info');
+}
+function contactFault(hitter, victim, dv) {
+  // stewards only investigate incidents involving the player (AI-vs-AI bumps in the pack are ignored)
+  if (!racing() || !(hitter.isPlayer || victim.isPlayer) || game.raceTime - hitter.contactT < 3) return;
+  hitter.contactT = game.raceTime;
+  if (dv >= 11) addPenalty(hitter, 5, 'causing a collision');
+  else if (hitter.isPlayer) radio('Careful, that contact with ' + victim.code + ' is being looked at.', 'warn');
+}
+function trackLimits(c) {
+  const out = Math.abs(c.lat) > W + KERB + 0.9;
+  if (out && !c.offLimits && Math.abs(c.v) > 12) {
+    if (c.isPlayer) c.lapInvalid = true;
+    if (racing()) {
+      c.strikes++;
+      if (c.strikes > 3) addPenalty(c, 5, 'track limits');
+      else if (c.isPlayer) {
+        radio(c.strikes === 3 ? 'Black and white flag. One more track limits strike and it is a penalty.' : 'Track limits warning, ' + c.strikes + ' of 3.', c.strikes === 3 ? 'bad' : 'warn');
+        updatePenTag();
+      }
+    }
+  }
+  c.offLimits = out;
+}
+const crossed = (N, from, to, mark) => { const span = (to - from + N) % N; return span > 0 && span < N / 2 && ((mark - from + N) % N) <= span && ((mark - from + N) % N) > 0; };
+const inZone = (N, i, z) => ((i - z.start + N) % N) <= ((z.end - z.start + N) % N);
+function carAhead(c) {
+  let best = null, bd = Infinity;
+  for (const o of game.cars) { if (o === c || o.finished) continue; const d = o.prog - c.prog; if (d > 0 && d < bd) { bd = d; best = o; } }
+  return best;
+}
+const drsEnabled = c => settings.mode === 'tt' || (game.phase === 'race' && c.maxDone >= 1);
+function drsLogic(c, prevIdx, T) {
+  const N = T.N;
+  T.drs.forEach((z, k) => {
+    if (crossed(N, prevIdx, c.idx, z.detect)) {
+      game.drsCross[k][c.code] = game.raceTime;
+      const a = carAhead(c), t = a && game.drsCross[k][a.code];
+      c.drsGap = (t !== undefined && t !== null && a) ? game.raceTime - t : Infinity;
+      c.drsArmed = (settings.mode === 'tt' || (drsEnabled(c) && c.drsGap < 1.0)) ? k : -1;
+      if (c.isPlayer && drsEnabled(c) && settings.mode !== 'tt') radio(c.drsArmed === k ? 'DRS enabled, gap ' + c.drsGap.toFixed(2) + 's.' : (isFinite(c.drsGap) ? 'No DRS, gap ' + c.drsGap.toFixed(2) + 's.' : 'No DRS this time.'), c.drsArmed === k ? 'good' : 'info', 2.5);
+    }
+    if (crossed(N, prevIdx, c.idx, z.start) && c.drsArmed === k) c.drsOpen = true;
+  });
+  if (c.drsOpen) {
+    const z = T.drs[c.drsArmed];
+    if (!z || c.inp.brake > 0 || !inZone(N, c.idx, z)) { c.drsOpen = false; c.drsArmed = -1; }
   }
 }
 
 function checkLaps(c, T) {
   const done = Math.floor(c.prog / T.N), bucket = Math.floor(c.prog / 25);
   if (bucket > c.lastBucket) { c.splits[bucket] = game.raceTime; c.lastBucket = bucket; }
-  if (c.isPlayer && Math.abs(c.lat) > W + KERB + 0.9) c.lapInvalid = true;
+  trackLimits(c);
   if (done > c.maxDone) {
     if (done >= 1) {
       const lt = game.raceTime - c.lapStart, valid = !(c.isPlayer && c.lapInvalid);
@@ -310,6 +385,7 @@ function checkLaps(c, T) {
       }
     }
     c.maxDone = done;
+    if (c.isPlayer && done === 1 && settings.mode !== 'tt' && T.drs.length) radio('DRS is now enabled. Within one second at detection to use it.', 'info');
     if (done >= game.laps && !c.finished) {
       c.finished = true; c.finishTime = game.raceTime; c.finishOrder = ++game.finishCount;
       if (c.isPlayer) onPlayerFinish();
@@ -375,6 +451,31 @@ const T = () => game.T;
 /* ---------------- Update ---------------- */
 let msgTimer = 0;
 function flashMsg(text, dur, sub) { $('msg').innerHTML = text + (sub ? '<small>' + sub + '</small>' : ''); $('msg').classList.add('show'); msgTimer = dur; }
+function radio(text, kind = 'info', dur = 6) {
+  const box = $('radio'), el = document.createElement('div');
+  el.className = 'rmsg ' + kind; el.innerHTML = '<span class="who">RACE ENGINEER</span>' + text;
+  box.prepend(el); while (box.children.length > 4) box.lastChild.remove();
+  setTimeout(() => { el.classList.add('out'); setTimeout(() => el.remove(), 500); }, dur * 1000);
+}
+function updatePenTag() {
+  const p = game.player, el = $('penTag');
+  const parts = [];
+  if (p.strikes) parts.push('TRACK LIMITS ' + Math.min(p.strikes, 3) + '/3');
+  if (p.penalty) parts.push('+' + p.penalty + 's PENALTY');
+  el.textContent = parts.join(' · '); el.classList.toggle('hidden', !parts.length);
+}
+function updateDrsHud() {
+  const p = game.player, Tr = game.T, el = $('drs'), N = Tr.N;
+  if (!Tr.drs.length || game.phase === 'lights') { el.className = 'hidden'; return; }
+  if (p.drsOpen) { el.className = 'open'; el.textContent = 'DRS OPEN'; return; }
+  // distance to the next activation point
+  let best = Infinity, bz = -1;
+  Tr.drs.forEach((z, k) => { const d = ((z.start - p.idx + N) % N) * DS; if (d < best) { best = d; bz = k; } });
+  if (best > 450) { el.className = 'hidden'; return; }
+  if (p.drsArmed === bz) { el.className = 'armed'; el.textContent = 'DRS AVAILABLE · ' + Math.round(best) + 'm'; }
+  else if (!drsEnabled(p)) { el.className = 'off'; el.textContent = 'DRS ZONE · ' + Math.round(best) + 'm · DISABLED LAP 1'; }
+  else { el.className = 'off'; el.textContent = 'DRS ZONE · ' + Math.round(best) + 'm' + (isFinite(p.drsGap) ? ' · GAP ' + p.drsGap.toFixed(1) + 's' : ''); }
+}
 function setStartLights(n) { world.setStartLights(n); [...$('startLights').children].forEach((p, k) => p.classList.toggle('on', k < n)); }
 
 function update(dt) {
@@ -396,7 +497,7 @@ function update(dt) {
     for (const c of game.cars) {
       let inp = (c.isPlayer && !c.autopilot) ? playerInput(c, h) : aiInput(c, h, Tr);
       if (c.startDelay > 0) { c.startDelay -= h; inp = { throttle: 0, brake: 0, steer: 0 }; }
-      c.inp = inp; stepCar(c, inp, h, Tr);
+      c.inp = inp; const prev = c.idx; stepCar(c, inp, h, Tr); drsLogic(c, prev, Tr);
     }
     collide();
     for (const c of game.cars) checkLaps(c, Tr);
@@ -485,7 +586,16 @@ function drawShape(ctx, path, map, start, lw) {
 function buildMinimap(Tr) {
   const off = document.createElement('canvas'); off.width = off.height = 400;
   const { path, map } = trackPath(Math.floor(Tr.N / 3), i => Tr.px[i * 3], i => Tr.pz[i * 3], 400, 26);
-  drawShape(off.getContext('2d'), path, map, [Tr.px[0], Tr.pz[0]], 7);
+  const g = off.getContext('2d');
+  drawShape(g, path, map, [Tr.px[0], Tr.pz[0]], 7);
+  // DRS zones in green with a white detection tick
+  for (const z of Tr.drs) {
+    g.strokeStyle = '#22e05a'; g.lineWidth = 9; g.lineCap = 'round'; g.beginPath();
+    for (let k = 0, i = z.start; k <= ((z.end - z.start + Tr.N) % Tr.N); k += 3, i = (z.start + k) % Tr.N) { const [x, y] = map(Tr.px[i], Tr.pz[i]); k === 0 ? g.moveTo(x, y) : g.lineTo(x, y); }
+    g.stroke();
+    const d = z.detect, [x, y] = map(Tr.px[d], Tr.pz[d]), nx = Tr.nx[d], nz = Tr.nz[d];
+    g.strokeStyle = '#ffffff'; g.lineWidth = 4; g.beginPath(); g.moveTo(x - nx * 13, y - nz * 13); g.lineTo(x + nx * 13, y + nz * 13); g.stroke();
+  }
   mm.bg = off; mm.map = map;
 }
 function drawMinimap() {
@@ -522,11 +632,12 @@ function updateHUD(dt) {
         else if (c.finished && L.finished) gap = '+' + (c.finishTime - L.finishTime).toFixed(1);
         else if (L.prog - c.prog >= Tr.N) gap = '+' + Math.floor((L.prog - c.prog) / Tr.N) + ' LAP';
         else { const b = c.lastBucket, tl = L.splits[b], tc = c.splits[b]; gap = (tl !== undefined && tc !== undefined) ? '+' + Math.max(0, tc - tl).toFixed(1) : '—'; }
-        html += '<div class="r' + (c.isPlayer ? ' me' : '') + '"><span class="p">' + (k + 1) + '</span><span class="c" style="background:' + c.color + '"></span><span class="n">' + c.code + '</span><span class="g">' + gap + '</span></div>';
+        html += '<div class="r' + (c.isPlayer ? ' me' : '') + '"><span class="p">' + (k + 1) + '</span><span class="c" style="background:' + c.color + '"></span><span class="n">' + c.code + (c.drsOpen ? ' <i class="d">DRS</i>' : '') + (c.penalty ? ' <i class="pen">+' + c.penalty + '</i>' : '') + '</span><span class="g">' + gap + '</span></div>';
       });
       $('board').innerHTML = html;
     }
   }
+  updateDrsHud();
   drawMinimap();
 }
 
@@ -536,7 +647,7 @@ function showResults() {
   const rows = game.cars.map(c => {
     let t = c.finishTime, est = false;
     if (!c.finished) { t = game.raceTime + (game.laps * Tr.N - c.prog) * DS / Math.max(Math.abs(c.v), 30); est = true; }
-    return { c, t, est };
+    return { c, t: t + c.penalty, est };
   }).sort((a, b) => a.t - b.t);
   let fl = Infinity; rows.forEach(r => fl = Math.min(fl, r.c.bestLap));
   const pIdx = rows.findIndex(r => r.c.isPlayer) + 1;
@@ -545,7 +656,7 @@ function showResults() {
   let html = '<tr><th>Pos</th><th>Driver</th><th>Team</th><th>Time</th><th>Best lap</th>' + (champ ? '<th>Pts</th>' : '') + '</tr>';
   rows.forEach((r, k) => {
     const time = k === 0 ? fmt(r.t) : '+' + (r.t - rows[0].t).toFixed(3) + (r.est ? '*' : '');
-    html += '<tr class="' + (r.c.isPlayer ? 'me' : '') + '"><td>' + (k + 1) + '</td><td><span class="sw" style="background:' + r.c.color + '"></span>' + r.c.name + '</td><td>' + r.c.team + '</td><td>' + time + '</td><td class="' + (r.c.bestLap === fl ? 'fl' : '') + '">' + fmt(r.c.bestLap) + '</td>' + (champ ? '<td><b>' + (POINTS[k] ? '+' + POINTS[k] : '') + '</b></td>' : '') + '</tr>';
+    html += '<tr class="' + (r.c.isPlayer ? 'me' : '') + '"><td>' + (k + 1) + '</td><td><span class="sw" style="background:' + r.c.color + '"></span>' + r.c.name + '</td><td>' + r.c.team + '</td><td>' + time + (r.c.penalty ? ' <span class="pen">(+' + r.c.penalty + 's)</span>' : '') + '</td><td class="' + (r.c.bestLap === fl ? 'fl' : '') + '">' + fmt(r.c.bestLap) + '</td>' + (champ ? '<td><b>' + (POINTS[k] ? '+' + POINTS[k] : '') + '</b></td>' : '') + '</tr>';
   });
   $('resTable').innerHTML = html;
   $('champBox').classList.add('hidden');
@@ -555,7 +666,7 @@ function showResults() {
     rows.forEach((r, k) => { s.pts[r.c.code] = (s.pts[r.c.code] || 0) + (POINTS[k] || 0); });
     s.round++; s.finished = s.round >= TRACKS.length; saveSeason(s);
     const names = { YOU: ['You', LIVERIES[settings.livery]] };
-    s.lineup.forEach(l => { names[DRIVERS[l.di][1]] = [DRIVERS[l.di][0], TEAMS[Math.floor(l.di / 2) % TEAMS.length].color]; });
+    s.lineup.forEach(l => { names[DRIVERS[l.di][1]] = [DRIVERS[l.di][0], teamOf(l.di).color]; });
     const tab = Object.entries(s.pts).sort((a, b) => b[1] - a[1]);
     const myPos = tab.findIndex(e => e[0] === 'YOU') + 1;
     $('champTitle').textContent = s.finished ? (myPos === 1 ? 'You are World Champion!' : 'Season complete: P' + myPos) : 'Championship after round ' + s.round;
@@ -573,16 +684,18 @@ function refreshMenu() {
   ['optLaps', 'optOpp', 'optDiff'].forEach(id => $(id).style.opacity = mode === 'tt' || (mode === 'champ' && s && !s.finished) ? 0.35 : 1);
   $('seasonBox').classList.toggle('hidden', mode !== 'champ');
   if (mode === 'champ') {
-    if (s && !s.finished) { settings.track = s.round; $('seasonInfo').innerHTML = 'Round <b>' + (s.round + 1) + '</b> of ' + TRACKS.length + ' · You have <b>' + (s.pts.YOU || 0) + '</b> pts<br><small>' + s.laps + ' laps · ' + s.diff + ' AI · ' + s.opp + ' rivals</small>'; $('newSeason').classList.remove('hidden'); }
+    if (s && !s.finished) { settings.track = s.round; $('seasonInfo').innerHTML = 'Round <b>' + (s.round + 1) + '</b> of ' + TRACKS.length + ' · You have <b>' + (s.pts.YOU || 0) + '</b> pts<br><small>' + s.laps + ' laps · AI ' + (s.ai ?? 50) + '/100 · ' + s.opp + ' rivals</small>'; $('newSeason').classList.remove('hidden'); }
     else { settings.track = 0; $('seasonInfo').innerHTML = 'A 24-round season. Points for the top 10.<br><small>Uses the laps, rivals and difficulty above.</small>'; $('newSeason').classList.add('hidden'); }
   }
   $('startBtn').textContent = mode === 'tt' ? 'Start Time Trial' : mode === 'champ' ? (s && !s.finished ? 'Start Round ' + (s.round + 1) : 'Start Season') : 'Start Race';
   document.querySelectorAll('#swatches button').forEach((b, k) => b.classList.toggle('on', k === settings.livery));
+  $('aiSlider').value = settings.ai; $('aiVal').textContent = settings.ai; $('aiDesc').textContent = aiLabel(settings.ai);
   document.querySelectorAll('.tcard').forEach((c, k) => { c.classList.toggle('on', k === settings.track); c.classList.toggle('locked', mode === 'champ'); });
   const d = TRACKS[settings.track];
   $('tiName').textContent = d.name; $('tiBlurb').textContent = d.loc + ' · ' + d.blurb;
   const on = document.querySelector('.tcard.on'); if (on) on.scrollIntoView({ block: 'nearest' });
 }
+function aiLabel(s) { return s < 20 ? 'Rookie' : s < 40 ? 'Amateur' : s < 60 ? 'Club racer' : s < 75 ? 'Pro' : s < 90 ? 'Elite: brakes late' : 'Legend: right on the limit'; }
 function showLoading(on) { $('loading').classList.toggle('hidden', !on); }
 function withLoading(fn) { showLoading(true); setTimeout(() => { try { fn(); } finally { showLoading(false); } }, 30); }
 function selectTrack(i) {
@@ -598,11 +711,13 @@ function initMenu() {
   document.querySelectorAll('.seg').forEach(seg => seg.addEventListener('click', e => {
     const b = e.target.closest('button'); if (!b) return;
     const k = seg.dataset.opt, v = b.dataset.v;
-    settings[k] = (k === 'laps' || k === 'opp' || k === 'gfx') ? parseInt(v, 10) : v; saveSettings();
-    if (k === 'gfx') { setupPost(); withLoading(() => buildTrack(settings.track, true)); }
+    settings[k] = (k === 'laps' || k === 'opp') ? parseInt(v, 10) : v; saveSettings();
+    if (k === 'line') world.setRaceLine(v === 'on');
     const prev = settings.track; refreshMenu();
     if (k === 'mode' && settings.track !== prev) withLoading(() => buildTrack(settings.track));
   }));
+  $('aiSlider').addEventListener('input', e => { settings.ai = parseInt(e.target.value, 10); saveSettings(); $('aiVal').textContent = settings.ai; $('aiDesc').textContent = aiLabel(settings.ai); });
+  $('acceptBtn').onclick = () => { $('splash').classList.add('hidden'); audio.init(); audio.set(0, 0, false); };
   LIVERIES.forEach((c, k) => { const b = document.createElement('button'); b.style.background = c; b.title = 'Livery ' + (k + 1); b.onclick = () => { settings.livery = k; saveSettings(); refreshMenu(); }; $('swatches').appendChild(b); });
   TRACKS.forEach((d, i) => {
     const el = document.createElement('div'); el.className = 'tcard panel';
@@ -648,6 +763,7 @@ addEventListener('keydown', e => {
   if (e.repeat) return;
   if (k === 'c' && game.state === 'race' && !game.paused) setCam((game.camMode + 1) % 3);
   if (k === 'escape') togglePause();
+  if (k === 'l' && game.state === 'race') { settings.line = settings.line === 'on' ? 'off' : 'on'; saveSettings(); world.setRaceLine(settings.line === 'on'); flashMsg('RACING LINE ' + settings.line.toUpperCase(), 0.9); }
   if (k === 'm') { audio.muted = !audio.muted; store.set('apexgp-muted', audio.muted ? '1' : '0'); if (game.state === 'race') flashMsg(audio.muted ? 'SOUND OFF' : 'SOUND ON', 0.9); }
 });
 addEventListener('keyup', e => { const k = e.key.toLowerCase(); if (k in keys) keys[k] = false; });

@@ -279,6 +279,37 @@ export class World {
       for (let s2 = 0; s2 < 22; s2++) { const back = 8 + s2 * 8, i = (N - Math.round(back / DS) + 1) % N, lane = (s2 % 2 === 0 ? 1 : -1) * 3.2; d.position.set(T.px[i] + T.nx[i] * lane, 0.04, T.pz[i] + T.nz[i] * lane); d.rotation.set(0, Math.atan2(T.tx[i], T.tz[i]), 0); d.updateMatrix(); im.setMatrixAt(s2, d.matrix); }
       im.receiveShadow = true; G.add(im); gg.dispose(); }
 
+    /* ----- racing line (green = full throttle, yellow = lift, red = brake) ----- */
+    {
+      const g = ribbon(T, 0, N, [i => [T.race[i] + 0.35, 0.045, 0], i => [T.race[i] - 0.35, 0.045, 1]], 4);
+      const cols = new Float32Array(g.attributes.position.count * 3), c = new THREE.Color();
+      for (let k = 0; k <= N; k++) {
+        const i = k % N, ahead = T.vprof[(i + 12) % N], here = T.vprof[i];
+        if (ahead < here - 0.6) c.set('#ff2a2a'); else if (here < 88) c.set('#ffd21a'); else c.set('#2bff6a');
+        for (let col2 = 0; col2 < 2; col2++) cols.set([c.r, c.g, c.b], (k * 2 + col2) * 3);
+      }
+      g.setAttribute('color', new THREE.BufferAttribute(cols, 3));
+      this.raceLine = add(g, new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.55, depthWrite: false, toneMapped: false }), { recv: false });
+      this.raceLine.renderOrder = 2;
+      this.raceLine.visible = !!this.showLine;
+    }
+    /* ----- DRS detection / activation lines and boards ----- */
+    {
+      const lineM = new THREE.MeshStandardMaterial({ color: '#f4f4f4', roughness: 0.6 });
+      const signTex = (txt, bg) => canvasTex(256, 128, (g2, w, h) => { g2.fillStyle = bg; g2.fillRect(0, 0, w, h); g2.fillStyle = '#111'; g2.font = '800 54px "Barlow Condensed", Arial'; g2.textAlign = 'center'; g2.textBaseline = 'middle'; g2.fillText(txt, w / 2, h / 2 + 3); }, { repeat: false });
+      const detTex = signTex('DRS DETECTION', '#f4f4f4'), actTex = signTex('DRS', '#22e05a');
+      for (const z of T.drs) {
+        for (const [i, tex] of [[z.detect, detTex], [z.start, actTex]]) {
+          add(ribbon(T, i, 1, [col(W, 0.043, 0), col(-W, 0.043, 1)], 2), lineM).scale.set(1, 1, 1);
+          const lim = T.limR[i];
+          const fr = new THREE.Object3D(); fr.position.set(T.px[i] - T.nx[i] * (lim + 1.2), 0, T.pz[i] - T.nz[i] * (lim + 1.2)); fr.rotation.y = Math.atan2(T.tx[i], T.tz[i]); G.add(fr);
+          const post = new THREE.Mesh(new THREE.BoxGeometry(0.12, 2.6, 0.12).translate(0, 1.3, 0), new THREE.MeshStandardMaterial({ color: '#555b66' })); fr.add(post);
+          const board = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 1.2), new THREE.MeshStandardMaterial({ map: tex, roughness: 0.6, emissive: th.night ? '#ffffff' : '#000000', emissiveMap: th.night ? tex : null, emissiveIntensity: 0.6 }));
+          board.position.set(0, 3.0, 0.08); board.rotation.y = Math.PI; fr.add(board);
+        }
+      }
+    }
+
     /* ----- trackside structures ----- */
     const frameAt = (i, lat, y = 0) => { const o = new THREE.Object3D(); o.position.set(T.px[i] + T.nx[i] * lat, y, T.pz[i] + T.nz[i] * lat); o.rotation.y = Math.atan2(T.tx[i], T.tz[i]); return o; };
     const steel = new THREE.MeshStandardMaterial({ color: '#2a2e36', roughness: 0.5, metalness: 0.6 });
@@ -429,6 +460,8 @@ export class World {
       inst(geo, mat, near.concat(far), (d, p) => { const fr = p[3] > 450; d.rotation.y = r() * 6; d.scale.set(16 + r() * 26, fr ? 50 + Math.pow(r(), 2) * 230 : 14 + Math.pow(r(), 2) * 90, 16 + r() * 26); }, { colors: pal });
     }
   }
+
+  setRaceLine(on) { this.showLine = on; if (this.raceLine) this.raceLine.visible = on; }
 
   setStartLights(n) { this.gantryLights.forEach((m, k) => { m.emissiveIntensity = k < n ? 6 : 0; m.color.set(k < n ? '#ff2a2a' : '#160404'); }); }
 
