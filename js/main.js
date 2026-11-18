@@ -137,7 +137,7 @@ function resetState(c) {
     lapInvalid: false, lapTimes: [], finished: false, finishTime: 0, finishOrder: 0, splits: {}, lastBucket: -1e9, laneOff: 0, laneTarget: 0, blockT: 0, startDelay: 0,
     autopilot: false, inp: { throttle: 0, brake: 0, steer: 0 }, gear: 0, rpm: 4000, wheelRot: 0, hitT: 0, scrub: 0, sparkT: Math.random(),
     drsArmed: -1, drsOpen: false, drsGap: Infinity, offLimits: false, strikes: 0, penalty: 0, contactT: -9, pitReq: false, pit: null, pits: 0,
-    dmg: { fw: 0, rw: 0, susp: 0, punct: false, pull: 0 }, dnf: false, retire: null, yieldT: 0, active: true, sessBest: Infinity, timedLaps: 0, evalT: 0, wearWarn: 0,
+    dmg: { fw: 0, rw: 0, susp: 0, punct: false, pull: 0 }, dnf: false, retire: null, yieldT: 0, active: true, sessBest: Infinity, timedLaps: 0, evalT: 0, wearWarn: 0, outLap: false,
   });
   c.fwing.visible = c.rwing.visible = true;
 }
@@ -224,6 +224,7 @@ function hideAllOverlays() { ['results', 'pause', 'qres', 'strategy'].forEach(id
 function startSession(kind) {
   const Tr = game.T, p = game.player;
   hideAllOverlays();
+  game.wx = { announced: 0, level: 0, raining: false, forecastSaid: false };
   game.session = kind; game.raceTime = 0; game.finishCount = 0; game.paused = false; game.resultsAt = 0; game.state = 'race';
   game.drsCross = Tr.drs.map(() => ({}));
   const quali = kind !== 'tt' && kind !== 'race';
@@ -427,7 +428,7 @@ function stepCar(c, inp, dt, Tr) {
   const lapsLife = isRace() ? Math.max(2, COMP[c.tyre.comp].life * game.laps) : COMP[c.tyre.comp].life * 20;
   const load = Math.min(1, Math.abs(yaw * sp) / 30) + Math.abs(slip);
   const dryPen = !SLICK(c.tyre.comp) ? (c.tyre.comp === 'inter' ? 1 + 2.5 * Math.max(0, 0.25 - wet) * 4 : 1 + 4 * Math.max(0, 0.4 - wet) * 2.5) : 1;
-  c.tyre.wear += sp * dt / DS / (lapsLife * Tr.N) * (0.7 + 0.6 * load) * dryPen;
+  if (isRace()) c.tyre.wear += sp * dt / DS / (lapsLife * Tr.N) * (0.7 + 0.6 * load) * dryPen;
 
   const ni = locate(Tr, c.x, c.z, c.idx);
   let dn = ni - c.idx; if (dn > Tr.N / 2) dn -= Tr.N; else if (dn < -Tr.N / 2) dn += Tr.N;
@@ -525,13 +526,13 @@ function serviceCar(c) {
   if (c.dmg.rw > 0.05) { t += 8; c.dmg.rw = 0; c.rwing.visible = true; notes.push('new rear wing'); }
   c.dmg.punct = false;
   if (isRace() || c.isPlayer) {
-    const comp = isRace() ? nextCompound(c) : c.tyre.comp;
+    const wq = weather.average(), comp = isRace() ? nextCompound(c) : (wq > 0.55 ? 'wet' : wq > 0.2 ? 'inter' : 'soft');
     if (c.plan && c.plan[c.planIdx + 1] && c.plan[c.planIdx + 1][0] === comp) c.planIdx++;
     else if (c.plan) c.planIdx++;
     setTyres(c, comp);
   }
   c.pits++; c.pitReq = false; c.pit.wait = t;
-  if (c.isPlayer && isRace()) radio('Stop ' + t.toFixed(1) + 's. ' + COMP[c.tyre.comp].name + 's fitted' + (notes.length ? ', ' + notes.join(', ') : '') + '.', 'info', 5);
+  if (c.isPlayer) radio('Stop ' + t.toFixed(1) + 's. ' + COMP[c.tyre.comp].name + 's fitted' + (notes.length ? ', ' + notes.join(', ') : '') + '.', 'info', 5);
 }
 
 /* ---------------- Damage ---------------- */
@@ -702,6 +703,7 @@ function drsLogic(c, prevIdx, Tr) {
 
 /* Pit decisions: evaluated ~300 m before pit entry each lap */
 function pitDecision(c, prevIdx, Tr) {
+  if (game.phase === 'run' && c.isPlayer) return qualiPitDecision(c, prevIdx, Tr);
   if (!racing() || c.pit || c.dnf || c.finished) return;
   const evalAt = (Tr.pit.entry - 150 + Tr.N) % Tr.N;
   if (!crossed(Tr.N, prevIdx, c.idx, evalAt)) return;
@@ -723,6 +725,20 @@ function pitDecision(c, prevIdx, Tr) {
   } else c.pitReq = true;
 }
 
+function qualiPitDecision(c, prevIdx, Tr) {
+  if (c.pit || c.pitReq) return;
+  const evalAt = (Tr.pit.entry - 150 + Tr.N) % Tr.N;
+  if (!crossed(Tr.N, prevIdx, c.idx, evalAt)) return;
+  const w = weather.average(), comp = c.tyre.comp, q = game.session !== 'tt';
+  let msg = null;
+  if (SLICK(comp) && w > 0.32) msg = (q ? 'We know it is quali, but it is raining too hard for slicks. ' : 'Too wet for slicks now. ') + (w > 0.6 ? 'Box, box for full wets.' : 'Box, box for inters.');
+  else if (comp === 'inter' && w < 0.12) msg = 'Track is dry enough now. Box for softs, there is time to find.';
+  else if (comp === 'wet' && w < 0.45) msg = 'Rain has eased. Box for inters.';
+  else if (c.dmg.fw > 0.45 || c.dmg.punct) msg = 'We need to fix the car. Box this lap.';
+  if (!msg) return;
+  c.pitReq = true; radio(msg + (q ? ' This lap will not count against your flying laps.' : '') + ' (P to stay out)', 'warn', 8);
+}
+
 /* ---------------- Laps & sessions ---------------- */
 function checkLaps(c, Tr) {
   const done = Math.floor(c.prog / Tr.N), bucket = Math.floor(c.prog / 25);
@@ -736,7 +752,9 @@ function checkLaps(c, Tr) {
     if (valid && lt < c.bestLap) c.bestLap = lt;
     c.lapStart = game.raceTime;
     if (isRace() && valid && lt < game.fastest && done >= 1) { game.fastest = lt; if (c.isPlayer && done > 1) radio('Purple! Fastest lap of the race: ' + fmt(lt) + '.', 'good', 4); }
-    if (c.isPlayer) {
+    const notTimed = c.isPlayer && !isRace() && (c.pit || c.outLap);
+    if (notTimed) { c.outLap = !!c.pit; c.lapTimes.pop(); if (c.bestLap === lt) c.bestLap = Math.min(Infinity, ...c.lapTimes); flashMsg(c.pit ? 'IN LAP' : 'FLYING LAP', 1.5); c.lapInvalid = false; }
+    else if (c.isPlayer) {
       if (valid && (!game.record || lt < game.record) && (game.session === 'tt' || !isRace())) { game.record = lt; store.set(bestKey(Tr), String(lt)); flashMsg('NEW RECORD', 2.5, fmt(lt)); }
       else if (!valid) flashMsg('LAP INVALID', 2, fmt(lt) + ' · track limits');
       else if (isRace() && done === game.laps - 1) flashMsg('FINAL LAP', 2, fmt(lt));
@@ -803,20 +821,23 @@ function lapRadio(p, done) {
   radio(parts.join(' '), 'info', 5);
 }
 function engineerTick() {
-  const p = game.player; if (!racing() || p.dnf) return;
+  const p = game.player; if (!(racing() || game.phase === 'run') || p.dnf) return;
+  const quali = !isRace();
   const wx = game.wx, t = game.raceTime, g = weather.global(t);
   // weather calls
   const nr = weather.nextRain(t);
   if (!wx.forecastSaid && nr - t < 70 && nr - t > 10 && g < 0.05) { wx.forecastSaid = true; radio('Rain expected in about a minute.', 'warn'); }
   if (!wx.raining && g > 0.05) {
-    wx.raining = true; wx.level = g;
+    wx.raining = true; wx.level = Math.max(g, 0.3); wx.lastT = t;
     const sr = weather.sectorRain(), worst = sr.indexOf(Math.max(...sr)) + 1;
-    radio("It's starting to rain. Heaviest in sector " + worst + '.', 'warn');
+    radio((quali ? 'Rain is starting to fall, heaviest in sector ' + worst + '. Get a lap in now before it gets worse.' : "It's starting to rain. Heaviest in sector " + worst + '.'), 'warn');
   } else if (wx.raining) {
-    if (g > wx.level + 0.2) { wx.level = g; const sr = weather.sectorRain(), worst = sr.indexOf(Math.max(...sr)) + 1; radio('Rain is getting heavier, especially in sector ' + worst + '.', 'warn'); }
-    else if (g < wx.level - 0.2 && g > 0.04) { wx.level = g; radio('Rain is getting lighter.', 'info'); }
+    if (t - (wx.lastT || 0) < 30) { /* don't nag */ }
+    else if (g > wx.level + 0.3) { wx.lastT = t; wx.level = g; const sr = weather.sectorRain(), worst = sr.indexOf(Math.max(...sr)) + 1; radio('Rain is getting heavier, especially in sector ' + worst + '.', 'warn'); }
+    else if (g < wx.level - 0.25 && g > 0.04) { wx.lastT = t; wx.level = g; radio('Rain is getting lighter.', 'info'); }
     else if (g < 0.03) { wx.raining = false; wx.level = 0; radio('Rain has stopped. The track will start drying.', 'info'); }
   }
+  if (quali) return;
   // tyres
   if (p.tyre.wear > 0.7 && p.wearWarn < 1) { p.wearWarn = 1; radio('Tyres are starting to go off.', 'info'); }
   if (p.tyre.wear > 1.0 && p.wearWarn < 2) { p.wearWarn = 2; radio('Tyres are gone. Expect a lot less grip.', 'warn'); }
@@ -1095,14 +1116,14 @@ function updateHUD(dt) {
   ['dTL', 'dTR', 'dBL', 'dBR'].forEach(id => $(id).style.background = d.punct ? '#ff2a2a' : dmgColor(Math.min(1, p.tyre.wear) * 0.6));
   const pitEl = $('pitTag');
   if (p.pit && p.pit.stage !== 'garage') { pitEl.className = 'on'; pitEl.textContent = p.pit.stage === 'stop' ? 'PIT STOP · ' + Math.max(0, p.pit.wait).toFixed(1) + 's' : 'PIT LIMITER · 80'; }
-  else if (p.pitReq && isRace()) { pitEl.className = 'req'; pitEl.textContent = 'BOX THIS LAP · P TO CANCEL'; }
+  else if (p.pitReq) { pitEl.className = 'req'; pitEl.textContent = 'BOX THIS LAP · P TO CANCEL'; }
   else pitEl.className = 'hidden';
   const rain = weather.N ? weather.rainAt(p.idx) : 0, wetL = weather.N ? weather.wetAt(p.idx) : 0;
   $('wx').textContent = rain > 0.05 ? (rain > 0.6 ? 'HEAVY RAIN' : rain > 0.3 ? 'RAIN' : 'LIGHT RAIN') + ' · TRACK ' + Math.round(wetL * 100) + '% WET' : wetL > 0.08 ? 'DRYING · ' + Math.round(wetL * 100) + '% WET' : 'DRY';
   $('wx').className = rain > 0.05 || wetL > 0.08 ? 'wet' : '';
   if (sess !== 'tt') {
     if (isRace()) $('hLap').innerHTML = 'LAP <b>' + Math.min(game.laps, Math.max(1, p.maxDone + 1)) + '</b>/' + game.laps;
-    else $('hLap').innerHTML = '<b>' + sess + '</b> · ' + (p.maxDone < 0 ? 'OUT LAP' : 'FLYING LAP ' + Math.min(2, p.timedLaps + 1) + '/2');
+    else $('hLap').innerHTML = '<b>' + sess + '</b> · ' + (p.maxDone < 0 || p.outLap ? 'OUT LAP' : p.pit || p.pitReq ? 'IN LAP' : 'FLYING LAP ' + Math.min(2, p.timedLaps + 1) + '/2');
     boardT -= dt;
     if (boardT <= 0) { boardT = 0.25; isRace() ? raceBoard() : qualiBoard(); }
   }
@@ -1278,7 +1299,7 @@ addEventListener('keydown', e => {
   if (k === 'c' && game.state === 'race' && !game.paused) setCam((game.camMode + 1) % 3);
   if (k === 'escape') togglePause();
   if (k === 'l' && game.state === 'race') { settings.line = settings.line === 'on' ? 'off' : 'on'; saveSettings(); world.setRaceLine(settings.line === 'on'); flashMsg('RACING LINE ' + settings.line.toUpperCase(), 0.9); }
-  if (k === 'p' && racing() && game.player && !game.player.pit) { const p = game.player; p.pitReq = !p.pitReq; radio(p.pitReq ? 'Copy, box this lap.' : 'Copy, staying out.', 'info', 3); }
+  if (k === 'p' && (racing() || game.phase === 'run') && game.player && !game.player.pit) { const p = game.player; p.pitReq = !p.pitReq; radio(p.pitReq ? 'Copy, box this lap.' : 'Copy, staying out.', 'info', 3); }
   if (k === 'm') { audio.muted = !audio.muted; store.set('apexgp-muted', audio.muted ? '1' : '0'); if (game.state === 'race') flashMsg(audio.muted ? 'SOUND OFF' : 'SOUND ON', 0.9); }
 });
 addEventListener('keyup', e => { const k = e.key.toLowerCase(); if (k in keys) keys[k] = false; });
