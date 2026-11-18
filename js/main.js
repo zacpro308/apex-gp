@@ -41,7 +41,7 @@ const CAMS = ['COCKPIT', 'T-CAM', 'CHASE'];
 const COMP = {
   soft: { name: 'Soft', s: 'S', color: '#e2231a', grip: 1.035, life: 0.4 },
   medium: { name: 'Medium', s: 'M', color: '#f5c400', grip: 1.0, life: 0.68 },
-  hard: { name: 'Hard', s: 'H', color: '#e8e8e8', grip: 0.972, life: 1.05 },
+  hard: { name: 'Hard', s: 'H', color: '#e8e8e8', grip: 0.972, life: 0.8 },
   inter: { name: 'Intermediate', s: 'I', color: '#2bb54a', grip: 0.93, life: 0.7 },
   wet: { name: 'Wet', s: 'W', color: '#1e6fe0', grip: 0.9, life: 0.95 },
 };
@@ -245,7 +245,7 @@ function startSession(kind) {
       sess.reveal.push({ c, t, at: 25 + Math.random() * (dur - 30) });
     }
     game.q.cur = sess;
-    radio(kind === 'Q' ? 'Qualifying. Out lap, then two flying laps.' : kind + '. Out lap, then two flying laps. Bottom ' + game.q.elim[kind] + ' are knocked out.', 'info', 7);
+    radio((kind === 'Q' ? 'Qualifying. Out lap, then two flying laps.' : kind + '. Out lap, then two flying laps. Bottom ' + game.q.elim[kind] + ' are knocked out.') + ' DRS is free in the zones.', 'info', 7);
   } else if (kind === 'tt') radio('Time trial. Leave the garage when ready; DRS is free in the zones.', 'info', 6);
   $('board').classList.toggle('hidden', kind === 'tt'); $('tl').classList.toggle('hidden', kind === 'tt');
   $('startLights').classList.add('hidden'); $('garageBar').classList.remove('hidden');
@@ -679,7 +679,8 @@ function carAhead(c) {
   for (const o of game.cars) { if (o === c || !o.active || o.finished || o.dnf || o.pit) continue; const d = o.prog - c.prog; if (d > 0 && d < bd) { bd = d; best = o; } }
   return best;
 }
-const drsEnabled = c => game.session === 'tt' || (racing() && c.maxDone >= 1 && weather.average() < 0.25);
+const freeDrs = () => !isRace() && weather.average() < 0.25;
+const drsEnabled = c => freeDrs() || (racing() && c.maxDone >= 1 && weather.average() < 0.25);
 function drsLogic(c, prevIdx, Tr) {
   if (c.pit || c.dnf) { c.drsOpen = false; return; }
   const N = Tr.N;
@@ -688,7 +689,7 @@ function drsLogic(c, prevIdx, Tr) {
       game.drsCross[k][c.code] = game.raceTime;
       const a = carAhead(c), t = a ? game.drsCross[k][a.code] : undefined;
       c.drsGap = t !== undefined ? game.raceTime - t : Infinity;
-      c.drsArmed = (game.session === 'tt' || (drsEnabled(c) && c.drsGap < 1.0)) ? k : -1;
+      c.drsArmed = (freeDrs() || (drsEnabled(c) && c.drsGap < 1.0)) ? k : -1;
       if (c.isPlayer && racing() && c.maxDone >= 1) {
         if (weather.average() >= 0.25) radio('DRS disabled: track is too wet.', 'info', 2.5);
         else radio(c.drsArmed === k ? 'DRS enabled, gap ' + c.drsGap.toFixed(2) + 's.' : (isFinite(c.drsGap) ? 'No DRS, gap ' + c.drsGap.toFixed(2) + 's.' : 'No DRS this time.'), c.drsArmed === k ? 'good' : 'info', 2.5);
@@ -1059,12 +1060,13 @@ function updatePenTag() {
 function updateDrsHud() {
   const p = game.player, Tr = game.T, el = $('drs'), N = Tr.N;
   if (!Tr.drs.length || game.phase === 'lights' || game.phase === 'garage' || p.pit) { el.className = 'hidden'; return; }
+  if (freeDrs() && !p.drsOpen) { let bd = Infinity; Tr.drs.forEach(z => { bd = Math.min(bd, ((z.start - p.idx + N) % N) * DS); }); if (bd <= 450) { el.className = 'armed'; el.textContent = 'DRS AVAILABLE · ' + Math.round(bd) + 'm'; } else el.className = 'hidden'; return; }
   if (p.drsOpen) { el.className = 'open'; el.textContent = 'DRS OPEN'; return; }
   let best = Infinity, bz = -1;
   Tr.drs.forEach((z, k) => { const d = ((z.start - p.idx + N) % N) * DS; if (d < best) { best = d; bz = k; } });
   if (best > 450) { el.className = 'hidden'; return; }
   if (p.drsArmed === bz) { el.className = 'armed'; el.textContent = 'DRS AVAILABLE · ' + Math.round(best) + 'm'; }
-  else if (!drsEnabled(p)) { el.className = 'off'; el.textContent = 'DRS ZONE · ' + Math.round(best) + 'm · ' + (weather.average() >= 0.25 ? 'DISABLED (WET)' : isRace() ? 'DISABLED LAP 1' : 'QUALI: NO DRS'); }
+  else if (!drsEnabled(p)) { el.className = 'off'; el.textContent = 'DRS ZONE · ' + Math.round(best) + 'm · ' + (weather.average() >= 0.25 ? 'DISABLED (WET)' : 'DISABLED LAP 1'); }
   else { el.className = 'off'; el.textContent = 'DRS ZONE · ' + Math.round(best) + 'm' + (isFinite(p.drsGap) ? ' · GAP ' + p.drsGap.toFixed(1) + 's' : ''); }
 }
 function dmgColor(v) { return v < 0.05 ? '#2fd56a' : v < 0.4 ? '#f5c400' : v < 0.8 ? '#ff7a1a' : '#ff2a2a'; }
