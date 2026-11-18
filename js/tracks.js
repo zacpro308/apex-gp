@@ -63,14 +63,14 @@ export const TRACKS = [
     pts: [[380, 276], [-242, 276], [-276, 242], [-276, 172], [-310, 138], [-380, 138], [-414, 104], [-414, -104], [-380, -138], [-310, -138], [-276, -172], [-276, -242], [-242, -276], [-34, -276], [0, -242], [0, -172], [34, -138], [104, -138], [138, -172], [138, -242], [172, -276], [242, -276], [276, -242], [276, -172], [310, -138], [380, -138], [414, -104], [414, 242]] },
   { id: 'tropica', name: 'Tropica Park', loc: 'Isla Verde', blurb: 'Humid jungle circuit with a sweeping back section.', theme: 'tropical', runoff: 14, scale: 1,
     pts: [[-329, -430], [-72, -606], [118, -741], [290, -589], [456, -451], [553, -269], [650, -171], [713, -72], [814, 54], [790, 191], [688, 245], [573, 154], [505, 33], [319, 39], [130, 70], [-5, 215], [-158, 186], [-312, 246], [-451, 209], [-484, 63], [-568, -15], [-551, -167], [-604, -265], [-487, -313]] },
-  { id: 'alpine', name: 'Alpine Ring', loc: 'Glacier Pass', blurb: 'Flowing, rhythmic lap beneath snow-capped peaks.', theme: 'alpine', runoff: 14, scale: 1,
+  { id: 'alpine', name: 'Alpine Ring', loc: 'Glacier Pass', blurb: 'Flowing, rhythmic lap beneath snow-capped peaks.', theme: 'alpine', runoff: 14, scale: 1, straightStart: true,
     pts: polar(30, 430, [[3, 0.22, 0], [5, 0.08, 1.3]]) },
   { id: 'harbour', name: 'Harbour Street Circuit', loc: 'Port Calloway', blurb: 'Right-angle corners with the walls close on both sides.', theme: 'street', type: S, runoff: 1.2, scale: 9,
     pts: [[-36, 0], [0, 0], [12, 0], [15, 3], [19, 3], [22, 0], [36, 0], [40, 4], [40, 16], [36, 20], [20, 20], [16, 24], [16, 36], [12, 40], [-10, 40], [-14, 36], [-14, 28], [-18, 24], [-36, 24], [-40, 20], [-40, 4]] },
   { id: 'vinehill', name: 'Vinehill Circuit', loc: 'Bellvigne', blurb: 'Golden-hour run through rolling vineyard country.', theme: 'vineyard', runoff: 14, scale: 1,
     pts: [[2, 559], [-279, 511], [-513, 441], [-651, 414], [-693, 258], [-695, 165], [-732, -70], [-627, -212], [-524, -275], [-396, -329], [-232, -344], [-39, -273], [106, -325], [195, -316], [307, -216], [322, -125], [435, -103], [556, -120], [637, 5], [729, 112], [641, 281], [655, 400], [503, 415], [380, 481], [158, 586]] },
-  { id: 'forest', name: 'Old Forest Speedway', loc: 'Thornwood', blurb: 'Flat-out power circuit through the old pines.', theme: 'forest', runoff: 16, scale: 1,
-    pts: polar(28, 540, [[2, 0.18, 0.5], [4, 0.07, 0], [7, 0.03, 2]]) },
+  { id: 'thornwood', name: 'Thornwood Grand Circuit', loc: 'Thornwood', blurb: 'Two huge straights into heavy-braking hairpins. Made for overtaking.', theme: 'forest', runoff: 16, scale: 1, bank: 9,
+    pts: [[-756, -490], [678, -410], [846, 46], [146, -116], [-539, 367], [-449, -80], [-760, -306]] },
   { id: 'cedar', name: 'Cedar Valley Raceway', loc: 'Cedar Valley', blurb: 'Technical valley track, ringed by the river.', theme: 'river', runoff: 14, scale: 1,
     pts: [[398, 292], [80, 282], [-89, 247], [-346, 236], [-542, 244], [-604, 130], [-570, 31], [-594, -146], [-433, -252], [-207, -337], [-52, -262], [54, -242], [200, -173], [296, -138], [474, -249], [593, -274], [593, -146], [508, -31], [632, 48], [728, 218], [659, 275], [569, 288]] },
   { id: 'crimson', name: 'Crimson Dunes', loc: 'Sahrin Basin', blurb: 'Scorching midday desert circuit with a tricky final sector.', theme: 'desertDay', runoff: 14, scale: 1,
@@ -83,17 +83,17 @@ export const TRACKS = [
     pts: [[-40, 0], [20, 0], [32, 4], [34, 14], [26, 18], [10, 16], [4, 22], [10, 30], [30, 30], [42, 36], [42, 48], [32, 52], [-5, 50], [-12, 44], [-8, 36], [-20, 30], [-35, 32], [-44, 24], [-46, 10]] },
   { id: 'marrowind', name: 'Marrowind Raceway', loc: 'Ashford Hills', blurb: 'Autumn colours and a relentless run of corners.', theme: 'autumn', runoff: 14, scale: 1,
     pts: [[-476, -367], [-173, -514], [-1, -619], [119, -775], [279, -704], [491, -653], [540, -517], [618, -400], [602, -249], [560, -105], [683, 84], [494, 213], [430, 349], [252, 400], [92, 417], [-21, 490], [-114, 479], [-278, 439], [-490, 400], [-608, 331], [-507, 162], [-540, -93], [-614, -189], [-667, -313]] },
-  { id: 'prairie', name: 'Velocity Plains', loc: 'Great Prairie', blurb: 'Big, open and fast. Slipstream is king.', theme: 'plains', runoff: 16, scale: 1,
+  { id: 'prairie', name: 'Velocity Plains', loc: 'Great Prairie', blurb: 'Big, open and fast, with banked sweepers.', theme: 'plains', runoff: 16, scale: 1, bank: 14,
     pts: [[-912, -78], [-701, -428], [-516, -607], [-388, -704], [-165, -759], [0, -726], [199, -693], [359, -587], [475, -421], [613, -386], [741, -334], [804, -177], [859, 18], [755, 144], [644, 160], [561, 290], [508, 384], [397, 412], [309, 431], [208, 307], [22, 305], [-140, 262], [-283, 275], [-490, 380], [-614, 303], [-741, 247], [-855, 105], [-904, 12]] },
   { id: 'skyline', name: 'Skyline Downtown', loc: 'Metro City', blurb: 'Daytime blast between glass towers.', theme: 'city', type: S, runoff: 1.2, scale: 1,
     pts: [[-356, -218], [356, -218], [382, -193], [382, -134], [356, -109], [298, -109], [273, -84], [273, -25], [298, 0], [356, 0], [382, 25], [382, 193], [356, 218], [-356, 218], [-381, 193], [-381, 134], [-356, 109], [-298, 109], [-272, 84], [-272, 25], [-298, 0], [-356, 0], [-381, -25], [-381, -193]] },
-  { id: 'canyon', name: 'Canyon Loop', loc: 'Red Mesa', blurb: 'Sunset run through the red rock, with deceptive corners.', theme: 'canyon', runoff: 10, scale: 1,
+  { id: 'canyon', name: 'Canyon Loop', loc: 'Red Mesa', blurb: 'Sunset run through the red rock, with deceptive corners.', theme: 'canyon', runoff: 10, scale: 1, straightStart: true,
     pts: polar(32, 450, [[4, 0.2, 0.3], [6, 0.08, 1.0], [1, 0.1, 0]]) },
   { id: 'saltpan', name: 'Saltpan Speedway', loc: 'Mirage Flats', blurb: 'Dusk race on the salt flats as the floodlights come on.', theme: 'saltpan', runoff: 16, scale: 1,
     pts: [[-169, -981], [282, -972], [474, -821], [709, -712], [805, -555], [876, -324], [964, -164], [903, -80], [870, 98], [749, 231], [590, 257], [441, 227], [352, 184], [209, 249], [84, 343], [-34, 285], [-138, 354], [-227, 337], [-335, 294], [-461, 236], [-576, 259], [-664, 238], [-810, 126], [-839, -70], [-772, -228], [-851, -329], [-853, -419], [-669, -656], [-536, -826]] },
   { id: 'bellmont', name: 'Bellmont Old Town', loc: 'Bellmont', blurb: 'Late-afternoon street fight through the old quarter.', theme: 'street', type: S, runoff: 1.2, scale: 1,
     pts: [[-38, -208], [455, -208], [487, -177], [487, 177], [455, 209], [240, 209], [209, 177], [209, 101], [177, 70], [101, 70], [70, 101], [70, 177], [38, 209], [-455, 209], [-486, 177], [-486, 101], [-455, 70], [-379, 70], [-347, 38], [-347, -38], [-379, -69], [-455, -69], [-486, -101], [-486, -177], [-455, -208], [-240, -208], [-208, -177], [-208, 38], [-177, 70], [-101, 70], [-69, 38], [-69, -177]] },
-  { id: 'frostgate', name: 'Frostgate Autodrome', loc: 'Frostgate', blurb: 'Winter speed circuit carved through the snowfields.', theme: 'snow', runoff: 16, scale: 1,
+  { id: 'frostgate', name: 'Frostgate Autodrome', loc: 'Frostgate', blurb: 'Winter speed circuit with steeply banked turns.', theme: 'snow', runoff: 16, scale: 1, bank: 12,
     pts: [[-27, 474], [-480, 443], [-755, 401], [-888, 356], [-828, 247], [-626, 133], [-586, 32], [-673, -109], [-629, -187], [-443, -85], [-331, -151], [-150, -187], [35, -246], [139, -349], [406, -321], [670, -335], [745, -143], [783, -36], [896, 173], [834, 343], [708, 464], [455, 547], [337, 447], [217, 412]] },
   { id: 'riverlight', name: 'Riverlight Night', loc: 'Riverlight', blurb: 'Neon-washed night street race by the river.', theme: 'streetNight', type: S, runoff: 1.2, scale: 1,
     pts: [[418, 192], [-34, 192], [-64, 162], [-64, 94], [-94, 64], [-162, 64], [-192, 94], [-192, 162], [-222, 192], [-418, 192], [-448, 162], [-448, -34], [-418, -64], [-350, -64], [-320, -94], [-320, -162], [-290, -192], [34, -192], [64, -162], [64, -94], [94, -64], [162, -64], [192, -94], [192, -162], [222, -192], [290, -192], [320, -162], [320, -94], [350, -64], [418, -64], [448, -34], [448, 162]] },
@@ -128,6 +128,12 @@ function buildTrackData(def) {
   const sp = v3[0].clone().lerp(v3[1], 0.6);
   let si = 0, bd = 1e18;
   raw.forEach((p, i) => { const d = p.distanceToSquared(sp); if (d < bd) { bd = d; si = i; } });
+  if (def.straightStart) {
+    const n0 = raw.length, ang = i => { const a = raw[(i - 3 + n0) % n0], b = raw[i], c = raw[(i + 3) % n0]; return Math.abs(Math.atan2(c.z - b.z, c.x - b.x) - Math.atan2(b.z - a.z, b.x - a.x)) % (2 * Math.PI); };
+    let best = 0, bl = 0, run = 0;
+    for (let k = 0; k < 2 * n0; k++) { const a = ang(k % n0); if (Math.min(a, 2 * Math.PI - a) < 0.012) { run++; if (run > bl) { bl = run; best = k; } } else run = 0; }
+    si = (best - Math.floor(Math.min(bl, n0) * 0.4) + 2 * n0) % n0;
+  }
 
   const T = { def, N, street, length: N * DS, wallOff: W + KERB + def.runoff, theme: THEMES[def.theme] };
   const F = () => new Float32Array(N);
@@ -144,6 +150,14 @@ function buildTrackData(def) {
   let minX = 1e9, maxX = -1e9, minZ = 1e9, maxZ = -1e9;
   for (let i = 0; i < N; i++) { minX = Math.min(minX, px[i]); maxX = Math.max(maxX, px[i]); minZ = Math.min(minZ, pz[i]); maxZ = Math.max(maxZ, pz[i]); }
   Object.assign(T, { minX, maxX, minZ, maxZ, cx: (minX + maxX) / 2, cz: (minZ + maxZ) / 2, radius: Math.max(maxX - minX, maxZ - minZ) / 2 });
+
+  // banking (tracks with def.bank degrees): bank[i] = tan(angle), signed so the outside of the corner is raised
+  T.bank = F(); T.bankSin = F();
+  if (def.bank) {
+    const raw2 = F(), maxA = def.bank * Math.PI / 180;
+    for (let i = 0; i < N; i++) { const k = Math.abs(curv[i]); const f = k > 1 / 70 ? 0 : clamp((k - 1 / 700) / (1 / 180 - 1 / 700), 0, 1); raw2[i] = -Math.sign(curv[i]) * maxA * f; }
+    for (let i = 0; i < N; i++) { let a = 0; for (let k = -30; k <= 30; k++) a += raw2[(i + k + N) % N]; a /= 61; T.bank[i] = Math.tan(a); T.bankSin[i] = Math.abs(Math.sin(a)); }
+  }
 
   // wall limits
   const minLim = W + KERB + 0.8;
@@ -170,12 +184,14 @@ function buildTrackData(def) {
   T.limL = smoothLim(limL0); T.limR = smoothLim(limR0);
 
   // racing line
-  const K = 5, M = Math.floor(N / K), maxO = W - 0.9, off = new Float32Array(M), ci = m => m * K;
-  for (let it = 0; it < 900; it++) for (let m = 0; m < M; m++) {
-    const a = ci((m - 1 + M) % M), b = ci((m + 1) % M), c = ci(m), oa = off[(m - 1 + M) % M], ob = off[(m + 1) % M];
-    const mx = (px[a] + nx[a] * oa + px[b] + nx[b] * ob) / 2, mz = (pz[a] + nz[a] * oa + pz[b] + nz[b] * ob) / 2;
-    const o = (mx - px[c]) * nx[c] + (mz - pz[c]) * nz[c];
-    off[m] = clamp(off[m] + (o - off[m]) * 0.95, -maxO, maxO);
+  const K = 5, M = Math.floor(N / K), maxO = W - 1.5, off = new Float32Array(M), ci = m => m * K;
+  const qx = m => { const i = ci((m + M) % M); return px[i] + nx[i] * off[(m + M) % M]; }, qz = m => { const i = ci((m + M) % M); return pz[i] + nz[i] * off[(m + M) % M]; };
+  // minimise the sum of squared second differences (curvature): 6q = 4(q-1 + q+1) - (q-2 + q+2)
+  for (let it = 0; it < 4000; it++) for (let m = 0; m < M; m++) {
+    const c = ci(m);
+    const tx2 = (4 * (qx(m - 1) + qx(m + 1)) - (qx(m - 2) + qx(m + 2))) / 6, tz2 = (4 * (qz(m - 1) + qz(m + 1)) - (qz(m - 2) + qz(m + 2))) / 6;
+    const o = (tx2 - px[c]) * nx[c] + (tz2 - pz[c]) * nz[c];
+    off[m] = clamp(off[m] + (o - off[m]) * 0.9, -maxO, maxO);
   }
   const race = T.race = F();
   for (let i = 0; i < N; i++) { const m = Math.floor(i / K), f = (i - m * K) / K, a = off[m % M], b = off[(m + 1) % M]; race[i] = a + (b - a) * f; }
@@ -193,7 +209,8 @@ function buildTrackData(def) {
   const vcorner = F();
   for (let i = 0; i < N; i++) {
     let k = 0; for (let j = -1; j <= 1; j++) k = Math.max(k, kr[(i + j + N) % N]);
-    vcorner[i] = k > 1e-5 ? Math.min(95, (0.25 + Math.sqrt(0.0625 + 4 * k * 18)) / (2 * k)) : 95;
+    const Ab = 18 + 9.81 * T.bankSin[i] * 1.6;
+    vcorner[i] = k > 1e-5 ? Math.min(95, (0.25 + Math.sqrt(0.0625 + 4 * k * Ab)) / (2 * k)) : 95;
   }
   // braking profiles: cautious (most AI) and late-braking (top-level AI)
   const brakeProfile = brk => {
@@ -207,24 +224,20 @@ function buildTrackData(def) {
   T.vprof = brakeProfile(24);
   T.vprof2 = brakeProfile(34.5);
 
-  // DRS: the longest straights get a zone, with a detection point 150 m before activation
+  // DRS: every long flat-out section (including gently curving straights), detection 150 m before
   {
-    // flowing tracks may have no dead-straight sections, so relax the threshold until zones appear
-    let runs = [], s0 = 0;
-    for (const R of [700, 450, 300]) {
-      s0 = 0; while (s0 < N && Math.abs(curv[s0]) < 1 / R) s0++;
-      runs = []; let rs = -1;
-      for (let k = 0; k <= N; k++) {
-        const i = (s0 + k) % N, st = k < N && Math.abs(curv[i]) < 1 / R;
-        if (st && rs < 0) rs = k;
-        if (!st && rs >= 0) { if (k - rs >= 110) runs.push([rs, k - 1]); rs = -1; }
-      }
-      if (runs.length >= 2 || (runs.length && R === 300)) break;
+    const flat = i => T.vprof[i] >= 88;
+    let s0 = 0; while (s0 < N && flat(s0)) s0++;
+    const runs = []; let rs = -1;
+    for (let k = 0; k <= N; k++) {
+      const i = (s0 + k) % N, st = k < N && flat(i);
+      if (st && rs < 0) rs = k;
+      if (!st && rs >= 0) { if (k - rs >= 120) runs.push([rs, k - 1]); rs = -1; }
     }
     runs.sort((a, b) => (b[1] - b[0]) - (a[1] - a[0]));
-    T.drs = runs.slice(0, N > 1800 ? 3 : 2).map(([a, b]) => {
-      const start = (s0 + a + 15) % N, end = (s0 + b - 5) % N;
-      return { start, end, detect: (start - 75 + N) % N, len: (b - a - 20) * DS };
+    T.drs = runs.slice(0, N > 2300 ? 4 : 3).map(([a, b]) => {
+      const start = (s0 + a + 12) % N, end = (s0 + b - 4) % N;
+      return { start, end, detect: (start - 75 + N) % N, len: (b - a - 16) * DS };
     }).sort((a, b) => a.start - b.start);
   }
 
@@ -253,9 +266,18 @@ function buildTrackData(def) {
     const room = sd => Math.min(...range.map(i => sd > 0 ? T.limL[i] : T.limR[i]));
     const side = room(1) >= room(-1) ? 1 : -1;
     const lim = Math.max(...range.map(i => side > 0 ? T.limL[i] : T.limR[i]));
-    T.pit = { side, entry, exit, wall: lim, lat: side * (lim + 5.5), len: range.length, boxStart: 8, boxGap: 3 };
+    const len = range.length, limIn = 26, limOut = len - 26, first = limIn + 22, avail = limOut - 18 - first;
+    const boxGap = clamp(Math.floor(avail / 12), 2, 4);
+    T.pit = { side, entry, exit, wall: lim, fast: side * (lim + 3), lat: side * (lim + 7.3), outer: lim + 10, len, boxStart: (entry + first) % N, boxGap, limIn, limOut };
   }
   return T;
+}
+
+/* surface height on banked corners: road and kerbs fully banked, inside edge at ground level, run-off flat beyond */
+export function bankH(T, i, lat) {
+  const b = T.bank ? T.bank[i] : 0; if (!b) return 0;
+  const Wb = W + KERB + 2;
+  return b * clamp(lat, -Wb, Wb) + Math.abs(b) * Wb;
 }
 
 export function locate(T, x, z, hint) {

@@ -1,7 +1,8 @@
 import * as THREE from 'three';
-import { W, KERB, DS, TRACKS, getTrack, previewPoints, locate } from './tracks.js';
+import { W, KERB, DS, TRACKS, getTrack, previewPoints, locate, bankH } from './tracks.js';
 import { World } from './world.js';
-import { makeCar, disposeCar, setCompound } from './car.js';
+import { makeCar, disposeCar, setCompound, makeSafetyCar, AXLE_F, AXLE_R } from './car.js';
+import { Sound } from './audio.js';
 import { Particles, Skids } from './fx.js';
 import { Weather } from './weather.js';
 import { clamp, angDiff, rng, fmt, store, setMaxAniso, smooth } from './util.js';
@@ -39,7 +40,7 @@ const POINTS = [25, 18, 15, 12, 10, 8, 6, 4, 2, 1];
 const aiPace = s => 0.8 + 0.225 * Math.pow(clamp(s, 0, 100) / 100, 0.75);
 // skill 80-100 also get extra grip, braking and power so the very top is genuinely hard to beat
 const aiBoost = s => 1 + BOOST_MAX * Math.pow(clamp((s - 70) / 30, 0, 1), 2);
-const BOOST_MAX = 0.42;
+const BOOST_MAX = 0.16;
 const GEARS = [0, 22, 33, 44, 54, 64, 74, 84, 200];
 const CAMS = ['COCKPIT', 'T-CAM', 'CHASE'];
 const COMP = {
@@ -90,26 +91,9 @@ function buildTrack(i) {
 }
 
 /* ---------------- Audio ---------------- */
-const audio = {
-  ctx: null, muted: store.get('apexgp-muted') === '1',
-  init() {
-    if (this.ctx) { this.ctx.resume(); return; }
-    try {
-      const AC = window.AudioContext || window.webkitAudioContext, ctx = this.ctx = new AC();
-      this.o1 = ctx.createOscillator(); this.o1.type = 'sawtooth'; this.o2 = ctx.createOscillator(); this.o2.type = 'square';
-      this.f = ctx.createBiquadFilter(); this.f.type = 'lowpass'; this.f.frequency.value = 900; this.f.Q.value = 3;
-      this.g = ctx.createGain(); this.g.gain.value = 0; const g2 = ctx.createGain(); g2.gain.value = 0.35;
-      this.o1.connect(this.f); this.o2.connect(g2); g2.connect(this.f); this.f.connect(this.g); this.g.connect(ctx.destination);
-      this.o1.start(); this.o2.start();
-    } catch (e) { this.ctx = null; }
-  },
-  set(rpm, thr, on) {
-    if (!this.ctx) return; const t = this.ctx.currentTime, f = 28 + rpm / 12500 * 240;
-    this.o1.frequency.setTargetAtTime(f, t, 0.03); this.o2.frequency.setTargetAtTime(f * 0.5, t, 0.03);
-    this.f.frequency.setTargetAtTime(450 + thr * 1900, t, 0.05);
-    this.g.gain.setTargetAtTime(on && !this.muted ? 0.035 + 0.06 * thr : 0, t, 0.05);
-  },
-};
+const sound = new Sound();
+sound.muted = store.get('apexgp-muted') === '1';
+const audio = { init() { sound.init(); }, set() {}, get muted() { return sound.muted; }, set muted(v) { sound.muted = v; } };
 
 /* ---------------- Championship ---------------- */
 const loadSeason = () => store.json('apexgp2-season', null);
@@ -141,7 +125,7 @@ function resetState(c) {
     lapInvalid: false, lapTimes: [], finished: false, finishTime: 0, finishOrder: 0, splits: {}, lastBucket: -1e9, laneOff: 0, laneTarget: 0, blockT: 0, startDelay: 0,
     autopilot: false, inp: { throttle: 0, brake: 0, steer: 0 }, gear: 0, rpm: 4000, wheelRot: 0, hitT: 0, scrub: 0, sparkT: Math.random(),
     drsArmed: -1, drsOpen: false, drsGap: Infinity, offLimits: false, strikes: 0, penalty: 0, contactT: -9, pitReq: false, pit: null, pits: 0,
-    dmg: { fw: 0, rw: 0, susp: 0, punct: false, pull: 0 }, dnf: false, retire: null, yieldT: 0, active: true, sessBest: Infinity, timedLaps: 0, evalT: 0, wearWarn: 0, outLap: false,
+    dmg: { fw: 0, rw: 0, susp: 0, punct: false, pull: 0 }, dnf: false, retire: null, yieldT: 0, active: true, sessBest: Infinity, timedLaps: 0, evalT: 0, wearWarn: 0, outLap: false, inPitRoad: false, impact: 0,
   });
   c.fwing.visible = c.rwing.visible = true;
 }
@@ -179,7 +163,7 @@ function placeGrid(order, Tr) {
 const boxIdx = (c, Tr) => (Tr.pit.boxStart + c.teamIdx * Tr.pit.boxGap) % Tr.N;
 const boxK = (c, Tr) => (boxIdx(c, Tr) - Tr.pit.entry + Tr.N) % Tr.N;
 function placeGarage(c, Tr) {
-  c.pit = { stage: 'garage', k: boxK(c, Tr), lat0: Tr.pit.lat, wait: 0 };
+  c.pit = { stage: 'garage', k: boxK(c, Tr), lat0: Tr.pit.fast, wait: 0, stopAtBox: true, total: 1 };
   c.prog = boxIdx(c, Tr) - Tr.N; c.v = 0; pitPose(c, Tr);
 }
 
@@ -229,6 +213,7 @@ function hideAllOverlays() { ['results', 'pause', 'qres', 'strategy'].forEach(id
 function startSession(kind) {
   const Tr = game.T, p = game.player;
   hideAllOverlays();
+  clearSC(); game.flag = null; $('flag').className = 'hidden';
   game.wx = { announced: 0, level: 0, raining: false, forecastSaid: false };
   game.session = kind; game.raceTime = 0; game.finishCount = 0; game.paused = false; game.resultsAt = 0; game.state = 'race';
   game.drsCross = Tr.drs.map(() => ({}));
@@ -245,7 +230,7 @@ function startSession(kind) {
     const factor = { Q1: 1, Q2: 0.998, Q3: 0.996, Q: 1 }[kind];
     for (const c of entrants) {
       if (c.isPlayer) continue;
-      const base = estimateLap(Tr, Math.min(1, c.pace), c.lateBrake ? Tr.vprof2 : Tr.vprof, c.boost || 1) * factor * 0.985;
+      const base = estimateLap(Tr, Math.min(1, c.pace), c.lateBrake ? Tr.vprof2 : Tr.vprof, c.boost || 1) * factor * 1.012;
       const wetPen = 1 + 0.16 * weather.average();
       const t = base * wetPen * (1 + (Math.random() - 0.5) * 0.006);
       sess.reveal.push({ c, t, at: 25 + Math.random() * (dur - 30) });
@@ -287,7 +272,7 @@ function nextQualiStep() {
   // simulate remaining sessions without the player
   while (q.idx < q.stages.length) {
     const name = q.stages[q.idx], f = { Q2: 0.998, Q3: 0.996 }[name] || 1;
-    const times = {}; q.entrants.forEach(c => times[c.code] = estimateLap(game.T, Math.min(1, c.pace), c.lateBrake ? game.T.vprof2 : game.T.vprof, c.boost || 1) * f * 0.985 * (1 + (Math.random() - 0.5) * 0.006));
+    const times = {}; q.entrants.forEach(c => times[c.code] = estimateLap(game.T, Math.min(1, c.pace), c.lateBrake ? game.T.vprof2 : game.T.vprof, c.boost || 1) * f * 1.012 * (1 + (Math.random() - 0.5) * 0.006));
     const ent = q.entrants.slice().sort((a, b) => times[a.code] - times[b.code]), elim = q.elim[name] || 0;
     q.results[name] = ent.map(c => ({ c, t: times[c.code] }));
     q.out = ent.slice(ent.length - elim).concat(q.out); q.entrants = ent.slice(0, ent.length - elim);
@@ -355,6 +340,7 @@ function startRace() {
   const Tr = game.T;
   hideAllOverlays(); $('hud').classList.remove('hidden');
   game.session = 'race'; game.raceTime = 0; game.finishCount = 0; game.paused = false; game.resultsAt = 0; game.state = 'race'; game.fastest = Infinity;
+  clearSC(); game.flag = null; game.dnfTimes = []; game.redWx = false; game.drsHoldLap = 0; $('flag').className = 'hidden';
   game.drsCross = Tr.drs.map(() => ({})); game.to = { issued: null }; game.wx = { announced: 0, level: 0, raining: false, forecastSaid: false };
   for (const c of game.cars) { resetState(c); c.stints = []; c.active = true; c.group.visible = true; }
   placeGrid(game.grid, Tr);
@@ -414,8 +400,9 @@ function stepCar(c, inp, dt, Tr) {
   const dec = (0.3 + (c.drsOpen ? 0.00022 : 0.00028) * v * v + (inp.throttle === 0 ? 1.2 : 0) + DRAG[surf] * Math.abs(v) + (d.punct ? 0.05 * Math.abs(v) : 0)) * dt;
   if (v > 0) v = Math.max(0, v - dec); else if (v < 0) v = Math.min(0, v + dec);
 
-  const sp = Math.abs(v), geo = sp * Math.tan(0.42) / 3.6, dyn = (18 + 0.25 * sp) * grip / Math.max(sp, 1);
   const st = clamp(inp.steer + d.pull, -1, 1);
+  const bankA = Tr.bankSin[c.idx] * 9.81 * 1.6 * (st * Tr.curv[c.idx] > 0 ? 1 : -0.3);
+  const sp = Math.abs(v), geo = sp * Math.tan(0.42) / 3.6, dyn = ((18 + 0.25 * sp) * grip + bankA) / Math.max(sp, 1);
   const yaw = st * Math.min(geo, dyn) * (v < 0 ? -1 : 1);
   // throttle-on oversteer when grip is low (wet, worn tyres, rear wing damage)
   const loose = Math.max(0, 0.84 - grip + 0.15 * d.rw) * inp.throttle * Math.min(1, sp / 30);
@@ -440,24 +427,34 @@ function stepCar(c, inp, dt, Tr) {
   let dn = ni - c.idx; if (dn > Tr.N / 2) dn -= Tr.N; else if (dn < -Tr.N / 2) dn += Tr.N;
   c.idx = ni; c.prog += dn;
   c.lat = (c.x - Tr.px[ni]) * Tr.nx[ni] + (c.z - Tr.pz[ni]) * Tr.nz[ni];
+  // pit entry/exit roads: the pit-side wall has gaps there, and inside the pit lane the pit wall and outer wall apply
+  const P = Tr.pit, kk = (ni - P.entry + Tr.N) % Tr.N, inRange = kk < P.len, pl = P.side * c.lat;
+  const gap = inRange && (kk < 40 || kk > P.len - 40);
+  if (gap && pl > P.wall - 0.3) c.inPitRoad = true;
+  if (!inRange || pl < P.wall - 1.2) c.inPitRoad = false;
   const s = c.lat >= 0 ? 1 : -1, lim = (s > 0 ? Tr.limL[ni] : Tr.limR[ni]) - 1.05;
-  if (Math.abs(c.lat) > lim) {
-    const push = Math.abs(c.lat) - lim, ox = Tr.nx[ni] * s, oz = Tr.nz[ni] * s;
-    c.x -= ox * push; c.z -= oz * push; c.lat -= s * push;
-    let vx = c.v * Math.sin(c.vh), vz = c.v * Math.cos(c.vh);
-    const vn = vx * ox + vz * oz;
-    if (vn > 0) {
-      // bounce off the barrier, keep most of the sliding speed along it
-      vx -= 1.25 * vn * ox; vz -= 1.25 * vn * oz;
-      const fr = 1 - 0.35 * Math.min(1, vn / 12); vx *= fr; vz *= fr;
-      setVel(c, vx, vz);
-      const fx = Math.sin(c.h), fz = Math.cos(c.h), fdot = fx * ox + fz * oz;
-      const th = Math.atan2(Tr.tx[ni], Tr.tz[ni]), tgt = (fx * Tr.tx[ni] + fz * Tr.tz[ni]) >= 0 ? th : th + Math.PI;
-      c.h += angDiff(tgt, c.h) * Math.min(0.5, 0.15 + vn * 0.02);
-      c.spin += -s * (fdot > 0 ? 1 : -1) * Math.min(3, vn * 0.12) * (1 - Math.abs(fdot));
-      if (vn > 4) { c.hitT = Math.min(1, vn / 25); c.hitSide = s; damage(c, vn, fdot > 0.55 ? 'front' : fdot < -0.55 ? 'rear' : 'side'); }
-    }
-  }
+  if (inRange && s === P.side && (gap || c.inPitRoad)) {
+    if (pl > P.outer - 1.05) wallHit(c, Tr, ni, s, P.outer - 1.05);
+    else if (!gap && c.inPitRoad) wallHit(c, Tr, ni, -s, -(P.wall + 1.65));
+  } else if (Math.abs(c.lat) > lim) wallHit(c, Tr, ni, s, lim);
+}
+/* push the car back from a barrier on side d (+1 left, -1 right) at lateral distance L along d, and bounce */
+function wallHit(c, Tr, ni, d, L) {
+  const pen = c.lat * d - L; if (pen <= 0) return;
+  const ox = Tr.nx[ni] * d, oz = Tr.nz[ni] * d;
+  c.x -= ox * pen; c.z -= oz * pen; c.lat -= d * pen;
+  let vx = c.v * Math.sin(c.vh), vz = c.v * Math.cos(c.vh);
+  const vn = vx * ox + vz * oz;
+  if (vn <= 0) return;
+  // bounce off the barrier, keep most of the sliding speed along it
+  vx -= 1.25 * vn * ox; vz -= 1.25 * vn * oz;
+  const fr = 1 - 0.35 * Math.min(1, vn / 12); vx *= fr; vz *= fr;
+  setVel(c, vx, vz);
+  const fx = Math.sin(c.h), fz = Math.cos(c.h), fdot = fx * ox + fz * oz;
+  const th = Math.atan2(Tr.tx[ni], Tr.tz[ni]), tgt = (fx * Tr.tx[ni] + fz * Tr.tz[ni]) >= 0 ? th : th + Math.PI;
+  c.h += angDiff(tgt, c.h) * Math.min(0.5, 0.15 + vn * 0.02);
+  c.spin += -d * (fdot > 0 ? 1 : -1) * Math.min(3, vn * 0.12) * (1 - Math.abs(fdot));
+  if (vn > 4) { c.hitT = Math.min(1, vn / 25); c.hitSide = d; if (c.isPlayer) c.impact = Math.min(1, vn / 20); damage(c, vn, fdot > 0.55 ? 'front' : fdot < -0.55 ? 'rear' : 'side'); }
 }
 
 /* Car retiring: coast to the side of the track and park */
@@ -466,6 +463,7 @@ function retire(c, why) {
   c.dnf = true; c.drsOpen = false; c.retire = { why, side: c.lat >= 0 ? 1 : -1, dmg: { ...c.dmg } };
   if (c.isPlayer) { radio(why === 'accident' ? 'Car is too badly damaged. We have to retire it. Sorry.' : 'We have to retire the car.', 'bad', 8); game.resultsAt = game.raceTime + 3; }
   else if (isRace()) radio('Yellow flag: ' + c.code + ' is out of the race.', 'warn', 4);
+  if (why === 'accident') incident(c.code + ' has crashed');
 }
 function retireStep(c, dt, Tr) {
   c.v = Math.max(0, c.v - 10 * dt);
@@ -478,11 +476,18 @@ function retireStep(c, dt, Tr) {
 }
 
 /* ---------------- Pit lane ---------------- */
+/* Between the two blue limiter lines the car runs on the limiter: it follows the fast lane,
+   swings into its box (box lane) if it is stopping, then back out to the fast lane. Entry and
+   exit roads either side of the limiter lines are driven normally. */
 function pitLat(c, k, Tr) {
-  const P = Tr.pit, L = P.len;
-  if (k < 40) return c.pit.lat0 + (P.lat - c.pit.lat0) * smooth(0, 40, k);
-  if (k > L - 40) return P.lat + (P.side * (W - 2.2) - P.lat) * smooth(L - 40, L, k);
-  return P.lat;
+  const P = Tr.pit, kb = boxK(c, Tr);
+  let lat = P.fast;
+  if (k < P.limIn + 14) lat = c.pit.lat0 + (P.fast - c.pit.lat0) * smooth(P.limIn - 1, P.limIn + 14, k);
+  if (c.pit.stopAtBox) {
+    if (k > kb - 16 && k <= kb) lat = P.fast + (P.lat - P.fast) * smooth(kb - 16, kb, k);
+    else if (k > kb && k < kb + 16) lat = P.lat + (P.fast - P.lat) * smooth(kb, kb + 16, k);
+  }
+  return lat;
 }
 function pitPose(c, Tr) {
   const P = Tr.pit, k = c.pit.k, i0 = (P.entry + Math.floor(k)) % Tr.N, i1 = (i0 + 1) % Tr.N, f = k - Math.floor(k);
@@ -496,20 +501,26 @@ function pitStep(c, dt, Tr) {
   if (p.stage === 'garage') { c.v = 0; pitPose(c, Tr); return; }
   if (p.stage === 'stop') {
     c.v = 0; p.wait -= dt;
-    if (p.wait <= 0) { p.stage = 'out'; if (c.isPlayer) radio('Go, go, go!', 'good', 2); }
+    // wheels come off and go back on in the middle of the stop
+    const tyresOff = p.wait < p.total * 0.75 && p.wait > p.total * 0.3;
+    c.wheels.forEach(w => w.spin.visible = !tyresOff);
+    if (p.wait <= 0) { p.stage = 'out'; c.wheels.forEach(w => w.spin.visible = true); if (c.isPlayer) radio('Go, go, go!', 'good', 2); }
     pitPose(c, Tr); return;
   }
   let target = 22;
-  if (p.stage === 'in') {
+  if (p.stage === 'in' && p.stopAtBox) {
     const d = (kb - p.k) * DS; target = Math.min(22, Math.sqrt(Math.max(0, 2 * 9 * d)));
-    if (d <= 0.5) { p.stage = 'stop'; c.v = 0; serviceCar(c); pitPose(c, Tr); return; }
+    if (d <= 0.5) { p.stage = 'stop'; c.v = 0; serviceCar(c); p.total = p.wait; world.crewPose(c.teamIdx, true); pitPose(c, Tr); return; }
   }
+  if (p.stage === 'out' && !p.crewBack && p.k > kb + 10) { p.crewBack = true; world.crewPose(c.teamIdx, null); }
   c.v = c.v > target ? Math.max(target, c.v - 28 * dt) : Math.min(target, c.v + 9 * dt);
   const dk = c.v * dt / DS; p.k += dk; c.prog += dk;
-  if (p.k >= P.len) {
-    c.pit = null; const i = P.exit; c.idx = i; c.lat = P.side * (W - 2.2);
-    c.x = Tr.px[i] + Tr.nx[i] * c.lat; c.z = Tr.pz[i] + Tr.nz[i] * c.lat; c.h = c.vh = Math.atan2(Tr.tx[i], Tr.tz[i]);
-    c.laneOff = c.lat - Tr.race[i]; c.laneTarget = 0;
+  if (p.k >= P.limOut) {
+    // past the exit limiter line: hand control back to the driver on the pit-exit road
+    if (!p.crewBack) world.crewPose(c.teamIdx, null);
+    pitPose(c, Tr); c.pit = null; c.inPitRoad = true; c.pitReq = false;
+    c.laneOff = 0; c.laneTarget = 0;
+    if (c.isPlayer) radio('Limiter off. Watch the white line on pit exit.', 'info', 3);
     return;
   }
   pitPose(c, Tr);
@@ -550,7 +561,7 @@ function damage(c, impact, where, scale = 1) {
   else if (where === 'rear') d.rw = Math.min(1, d.rw + impact * k / 28);
   else { d.susp = Math.min(1, d.susp + Math.max(0, impact - 9) * k / 40); d.pull = clamp(d.pull + (Math.random() < 0.5 ? -1 : 1) * Math.max(0, impact - 7) * k / 300, -0.14, 0.14); }
   if (impact > 15 && Math.random() < 0.3 * k) d.punct = true;
-  if (d.fw >= 0.85 && c.fwing.visible) { c.fwing.visible = false; debris(c, 1.9); }
+  if (d.fw >= 0.85 && c.fwing.visible) { c.fwing.visible = false; debris(c, 1.9); if (racing() && !game.flag && Math.random() < 0.35) deployFlag('vsc', 'debris on track'); }
   if (d.rw >= 0.9 && c.rwing.visible) { c.rwing.visible = false; debris(c, -2.3); }
   if (impact > 30 / Math.max(k, 0.3) || d.susp >= 1) { retire(c, 'accident'); return; }
   if (c.isPlayer && isRace()) {
@@ -595,14 +606,19 @@ function aiInput(c, dt, Tr) {
       if (dp < 5 && !o.dnf) follow = Math.min(follow, o.v - 0.5);
     }
   }
+  const P = Tr.pit, toEntry = (P.entry - c.idx + N) % N, inEntryRoad = ((c.idx - P.entry + N) % N) < P.limIn + 2;
+  const pitting = c.pitReq && !c.pit && ((toEntry < 140 && toEntry > 0) || inEntryRoad);
   if (c.yieldT > 0) { c.laneTarget = clamp((c.lat >= 0 ? W - 1.6 : -(W - 1.6)) - Tr.race[c.idx], -2 * W, 2 * W); c.blockT = 0.5; }
+  if (game.flag && game.flag.type === 'sc') { c.laneTarget = 0; c.blockT = 0; }
   c.laneOff += (c.laneTarget - c.laneOff) * Math.min(1, dt * 1.6);
   // precise line following: short look-ahead + feed-forward of the line's curvature + lateral error correction
   const sp0 = Math.max(Math.abs(c.v), 5);
   const ti = (c.idx + Math.round((5 + sp0 * 0.2) / DS)) % N;
-  const edge = W - 0.7;
+  const edge = W - 1.1;
   let off = clamp(Tr.race[ti] + c.laneOff, -edge, edge);
-  const wide = Math.abs(c.lat) - (W - 0.1);
+  const pathAhead = pitPathLat(c, ti, Tr), pathHere = pitPathLat(c, c.idx, Tr);
+  if (pathAhead !== null) off = pathAhead;
+  const wide = Math.abs(c.lat) - (W - 0.5);
   if (wide > 0) off -= Math.sign(c.lat) * Math.min(3, wide * 2);
   let tgtH = Math.atan2(Tr.px[ti] + Tr.nx[ti] * off - c.x, Tr.pz[ti] + Tr.nz[ti] * off - c.z);
   // after a spin, line the car back up with the track before going again
@@ -611,9 +627,9 @@ function aiInput(c, dt, Tr) {
   const err = angDiff(tgtH, c.h) - c.slip * 0.6;
   const maxYaw = Math.max(0.05, Math.min(sp0 * Math.tan(0.42) / 3.6, (18 + 0.25 * sp0) * (c.gripNow || 1) / sp0));
   const ahead = (c.idx + Math.round(sp0 * 0.06 / DS)) % N;
-  const ff = Tr.rk[ahead] * sp0 / maxYaw;
-  const latErr = clamp(Tr.race[c.idx] + c.laneOff, -edge, edge) - c.lat;
-  const want = clamp(ff + err * 2.2 + latErr * 0.05, -1, 1);
+  const ff = pathHere !== null ? 0 : Tr.rk[ahead] * sp0 / maxYaw;
+  const latErr = (pathHere !== null ? pathHere : clamp(Tr.race[c.idx] + c.laneOff, -edge, edge)) - c.lat;
+  const want = clamp(ff + err * 2.2 + latErr * (pathHere !== null ? 0.12 : 0.05), -1, 1);
   c.steer += clamp(want - c.steer, -10 * dt, 10 * dt);
   let target = Infinity;
   const prof = c.lateBrake ? Tr.vprof2 : Tr.vprof;
@@ -624,9 +640,22 @@ function aiInput(c, dt, Tr) {
   if (wide > 0) target = Math.min(target, c.v * (1 - Math.min(0.08, wide * 0.03)));
   if (c.surf >= 3) target = Math.min(target, 35);
   if (c.dmg.punct) target = Math.min(target, 28);
+  if (pitting) { const dl = ((P.entry + P.limIn - c.idx + N) % N) * DS; target = Math.min(target, Math.sqrt(21.5 * 21.5 + 2 * 16 * dl)); }
+  if (game.flag && racing()) target = Math.min(target, flagSpeed(c, Tr, target));
   let throttle = 0, brake = 0;
   if (c.v < target - 0.25) throttle = facing > 1.2 ? 0.4 : 1; else if (c.v > target + 0.6) brake = clamp((c.v - target) / 3, 0.3, 1); else throttle = 0.7;
   return { throttle, brake, steer: c.steer };
+}
+
+/* lateral target for an AI car on the pit entry or pit exit road (null when not relevant) */
+function pitPathLat(c, i, Tr) {
+  const P = Tr.pit, N = Tr.N, kk = (i - P.entry + N) % N, before = (P.entry - i + N) % N, edge = P.side * (W + 0.6);
+  if (c.pitReq && !c.pit) {
+    if (before > 0 && before < 75) return Tr.race[i] + (edge - Tr.race[i]) * smooth(75, 0, before);
+    if (kk <= P.limIn + 2) return edge + (P.fast - edge) * smooth(0, P.limIn - 6, kk);
+  }
+  if (c.inPitRoad && !c.pit && kk >= P.limOut - 2 && kk < P.len) return P.fast + (P.side * (W - 1.5) - P.fast) * smooth(P.limOut, P.len - 4, kk);
+  return null;
 }
 
 /* ---------------- Collisions (impulse based) ---------------- */
@@ -654,6 +683,7 @@ function collide() {
     if (cs > 3) { A.spin += clamp(-oa * j * la * 0.09, -2.5, 2.5); B.spin += clamp(ob * j * lb * 0.09, -2.5, 2.5); }
     if (cs > 5) {
       const aF = fa[0] * dx + fa[1] * dz, bF = -(fb[0] * dx + fb[1] * dz);
+      if (A.isPlayer || B.isPlayer) game.player.impact = Math.min(1, cs / 18);
       A.hitT = B.hitT = Math.min(1, cs / 20); A.hitSide = la > 0 ? 1 : -1; B.hitSide = lb > 0 ? -1 : 1;
       // AI-vs-AI bumps in the pack are softened so races are not decided by AI jostling
       const sc = (A.isPlayer || B.isPlayer) ? 1 : 0.35;
@@ -666,7 +696,7 @@ function collide() {
 
 /* ---------------- Race rules ---------------- */
 function addPenalty(c, secs, why) {
-  c.penalty += secs;
+  c.penalty += secs; (c.penLog = c.penLog || []).push(why);
   if (c.isPlayer) { radio(secs + ' second time penalty: ' + why + '.', 'bad'); updatePenTag(); }
   else if (Math.abs(positionOf(c) - positionOf(game.player)) <= 3) radio(c.code + ' gets a ' + secs + 's penalty for ' + why + '.', 'info', 4);
 }
@@ -683,7 +713,7 @@ function trackLimits(c) {
     if (c.isPlayer) c.lapInvalid = true;
     if (racing()) {
       c.strikes++;
-      if (c.strikes > 3) addPenalty(c, 5, 'track limits');
+      if (c.strikes > 3 && c.isPlayer) addPenalty(c, 5, 'track limits');
       else if (c.isPlayer) { radio(c.strikes === 3 ? 'Black and white flag. One more and it is a penalty.' : 'Track limits warning, ' + c.strikes + ' of 3.', c.strikes === 3 ? 'bad' : 'warn'); updatePenTag(); }
     }
   }
@@ -697,7 +727,7 @@ function carAhead(c) {
   return best;
 }
 const freeDrs = () => !isRace() && weather.average() < 0.25;
-const drsEnabled = c => freeDrs() || (racing() && c.maxDone >= 1 && weather.average() < 0.25);
+const drsEnabled = c => freeDrs() || (racing() && !game.flag && c.maxDone >= 1 && c.maxDone >= (game.drsHoldLap || 0) && weather.average() < 0.25);
 function drsLogic(c, prevIdx, Tr) {
   if (c.pit || c.dnf) { c.drsOpen = false; return; }
   const N = Tr.N;
@@ -739,6 +769,106 @@ function pitDecision(c, prevIdx, Tr) {
     const msg = { wet: 'Box, box. Heavy rain, we are going to full wets.', inter: 'Box, box. Rain is here, box for intermediates.', slicks: 'Track is drying. Box, box for slicks.', damage: 'Box this lap, we will fix the car.', plan: 'Box, box. Box this lap for ' + COMP[nextCompound(c)].name + 's.', wear: 'Tyres are finished. Box this lap.' }[reason];
     radio(msg + ' (P to stay out)', 'warn', 8);
   } else c.pitReq = true;
+}
+
+/* ---------------- Flags: VSC, Safety Car, Red flag ---------------- */
+let scObj = null, sc = null;
+function clearSC() { if (sc && scObj) scene.remove(scObj.group); sc = null; }
+function flagBanner(text, cls) { const el = $('flag'); el.textContent = text; el.className = cls; }
+function flagSpeed(c, Tr, target) {
+  const f = game.flag;
+  if (f.type === 'vsc') return Math.max(20, Tr.vprof[c.idx] * 0.6);
+  if (f.type === 'sc') {
+    // no overtaking: queue up behind the car (or the safety car) ahead with a ~14 m gap
+    let ahead = null, bd = Infinity;
+    for (const o of game.cars) { if (o === c || !o.active || o.dnf || o.pit || o.finished) continue; const dp = o.prog - c.prog; if (dp > 0 && dp < bd) { bd = dp; ahead = o; } }
+    if (sc) { const dp = sc.prog - c.prog; if (dp > 0 && dp < bd) { bd = dp; ahead = { v: sc.v }; } }
+    // everyone slows to the safety-car delta straight away (a little quicker if far behind, to close up)
+    let cap = Math.min(55, Tr.vprof[c.idx] * 0.62);
+    if (!ahead || bd * DS > 200) cap = Math.min(62, Tr.vprof[c.idx] * 0.7);
+    if (ahead && bd * DS < 80) cap = Math.min(cap, Math.max(0, ahead.v + (bd * DS - 14) * 0.6));
+    return cap;
+  }
+  return target;
+}
+function deployFlag(type, why) {
+  if (!racing() || game.flag || game.phase !== 'race') return;
+  if (type === 'red') return redFlag(why);
+  const p = game.player;
+  game.flag = { type, t: game.raceTime, end: type === 'vsc' ? game.raceTime + 30 + Math.random() * 20 : Infinity, ahead: new Set(standings().slice(0, Math.max(0, positionOf(p) - 1)).map(c => c.code)), vscOver: 0, passT: 0 };
+  for (const c of game.cars) { c.drsOpen = false; c.drsArmed = -1; }
+  if (type === 'vsc') { radio('Virtual Safety Car: ' + why + '. Slow down and keep to the delta.', 'warn', 6); flagBanner('VIRTUAL SAFETY CAR', 'vsc'); }
+  else {
+    radio('Safety Car deployed: ' + why + '. No overtaking, close up to the car ahead.', 'warn', 7); flagBanner('SAFETY CAR', 'sc');
+    const L = standings()[0];
+    if (!scObj) scObj = makeSafetyCar();
+    scene.add(scObj.group);
+    sc = { prog: L.prog + 140, v: 40, inLap: false, last: 0 }; game.flag.startLap = L.maxDone;
+  }
+}
+function clearFlag() {
+  game.flag = null; game.drsHoldLap = standings()[0].maxDone + 1;
+  flagBanner('GREEN FLAG', 'green'); setTimeout(() => { if (!game.flag) $('flag').className = 'hidden'; }, 2500);
+  radio('Green flag! Racing resumes.', 'good', 4);
+}
+function updateFlags(dt) {
+  const f = game.flag; if (!f || !racing()) return;
+  const Tr = game.T, st = standings(), L = st[0], p = game.player;
+  if (f.type === 'vsc') {
+    if (game.raceTime > f.end - 6 && !f.ending) { f.ending = true; radio('VSC ending. Get ready to go.', 'info', 4); flagBanner('VSC ENDING', 'vsc'); }
+    // the player must stay under the VSC delta speed
+    if (!p.pit && Math.abs(p.v) > Math.max(20, Tr.vprof[p.idx] * 0.6) + 3) { f.vscOver += dt; if (f.vscOver > 2 && !f.warned) { f.warned = true; radio('Too fast under the VSC. Slow down!', 'bad', 3); } if (f.vscOver > 6 && !f.penal) { f.penal = true; addPenalty(p, 5, 'exceeding the VSC delta'); } }
+    if (game.raceTime >= f.end) clearFlag();
+    return;
+  }
+  if (f.type === 'sc') {
+    if (sc) {
+      const gapS = (sc.prog - L.prog) * DS;
+      const i = Math.floor(((sc.prog % Tr.N) + Tr.N) % Tr.N) % Tr.N;
+      let tgt = clamp(Tr.vprof[i] * 0.58, 24, 48); if (gapS > 160) tgt = 18;
+      sc.v += clamp(tgt - sc.v, -10 * dt, 6 * dt); sc.prog += sc.v * dt / DS;
+      const i2 = Math.floor(((sc.prog % Tr.N) + Tr.N) % Tr.N) % Tr.N;
+      scObj.group.position.set(Tr.px[i2], bankH(Tr, i2, 0), Tr.pz[i2]); scObj.group.rotation.y = Math.atan2(Tr.tx[i2], Tr.tz[i2]);
+      scObj.lamps.forEach((l, k) => l.color.set(sc.inLap ? '#222222' : ((performance.now() / 250 | 0) + k) % 2 ? '#ffb000' : '#3a2a00'));
+      if (!sc.inLap && L.maxDone - f.startLap >= 2 && gapS < 40) { sc.inLap = true; radio('Safety Car in this lap. Leader controls the restart.', 'info', 5); flagBanner('SAFETY CAR IN THIS LAP', 'sc'); }
+      if (sc.inLap && crossed(Tr.N, sc.last, i2, Tr.pit.entry)) { scene.remove(scObj.group); sc = null; f.restartLap = L.maxDone; }
+      else sc.last = i2;
+    } else if (f.restartLap !== undefined && L.maxDone > f.restartLap) clearFlag();
+    // no overtaking under the safety car
+    const passed = [...f.ahead].map(code => game.cars.find(c => c.code === code)).filter(c => c && !c.dnf && !c.pit && c.prog < p.prog - 2);
+    if (passed.length && !p.pit) {
+      f.passT += dt;
+      if (f.passT > 0.5 && !f.toldBack) { f.toldBack = true; radio('You overtook ' + passed[0].code + ' under the Safety Car. Give the place back!', 'bad', 6); }
+      if (f.passT > 12) { addPenalty(p, 5, 'overtaking under the Safety Car'); passed.forEach(c => f.ahead.delete(c.code)); f.passT = 0; f.toldBack = false; }
+    } else { f.passT = 0; f.toldBack = false; }
+  }
+}
+function redFlag(why) {
+  game.flag = { type: 'red', t: game.raceTime }; game.phase = 'red'; game.redT = 4;
+  if (sc) { scene.remove(scObj.group); sc = null; }
+  radio('RED FLAG: ' + why + '. Session suspended, back to the grid.', 'bad', 8); flagBanner('RED FLAG', 'red');
+}
+function restartFromRed() {
+  const Tr = game.T, order = standings().filter(c => !c.dnf), L = Math.max(0, order[0].maxDone);
+  if (game.laps - L < 1) { for (const c of order) if (!c.finished) { c.finished = true; c.finishTime = game.raceTime; c.finishOrder = ++game.finishCount; } game.phase = 'finished'; showResults(); return; }
+  placeGrid(order, Tr);
+  const w = weather.average();
+  for (const c of order) {
+    c.prog += L * Tr.N; c.maxDone = L; c.lapStart = game.raceTime; c.splits = {}; c.lastBucket = Math.floor(c.prog / 25);
+    c.v = 0; c.spin = 0; c.pit = null; c.inPitRoad = false; c.pitReq = false; c.drsOpen = false; c.drsArmed = -1;
+    c.dmg = { fw: 0, rw: 0, susp: Math.min(c.dmg.susp, 0.5), punct: false, pull: 0 }; c.fwing.visible = c.rwing.visible = true;
+    setTyres(c, w > 0.55 ? 'wet' : w > 0.2 ? 'inter' : (SLICK(c.tyre.comp) && c.tyre.comp !== 'soft' ? c.tyre.comp : 'medium'));
+  }
+  game.flag = null; game.phase = 'lights'; game.lightsT = 0; game.goAt = 5.6 + Math.random() * 1.2; game.drsHoldLap = L + 1;
+  $('startLights').classList.remove('hidden'); flagBanner('RESTART', 'green'); setTimeout(() => { if (!game.flag) $('flag').className = 'hidden'; }, 3000);
+  radio('Standing restart. ' + (game.laps - L) + ' laps to go. Fresh tyres fitted.', 'info', 6);
+}
+function incident(why) {
+  if (!racing()) return;
+  game.dnfTimes = (game.dnfTimes || []).filter(t => game.raceTime - t < 15); game.dnfTimes.push(game.raceTime);
+  if (game.dnfTimes.length >= 3) return deployFlag('red', 'multiple cars crashed');
+  if (game.flag) return;
+  deployFlag(Math.random() < 0.55 ? 'sc' : 'vsc', why);
 }
 
 function qualiPitDecision(c, prevIdx, Tr) {
@@ -840,6 +970,7 @@ function engineerTick() {
   const p = game.player; if (!(racing() || game.phase === 'run') || p.dnf) return;
   const quali = !isRace();
   const wx = game.wx, t = game.raceTime, g = weather.global(t);
+  if (racing() && !game.redWx && weather.average() > 0.93) { game.redWx = true; deployFlag('red', 'too much standing water'); }
   // weather calls
   const nr = weather.nextRain(t);
   if (!wx.forecastSaid && nr - t < 70 && nr - t > 10 && g < 0.05) { wx.forecastSaid = true; radio('Rain expected in about a minute.', 'warn'); }
@@ -893,7 +1024,7 @@ function carEffects(c, dt) {
   const wet = weather.wetAt(c.idx);
   const lock = c.isPlayer && !c.autopilot && c.inp.brake > 0.8 && sp > 25 && Math.abs(c.steer) > 0.5;
   const sliding = lock || c.scrub > 0.9 || Math.abs(c.slip) > 0.35;
-  [[1, 1.66], [-1, 1.66]].forEach(([s, z], k) => {
+  [[1, AXLE_F], [-1, AXLE_F]].forEach(([s, z], k) => {
     const [x, wz] = wheel(s, z);
     if (sliding && c.surf <= 2 && wet < 0.3) {
       skids.mark(c.code + k, x, wz, fx, fz, 0.55);
@@ -907,7 +1038,7 @@ function carEffects(c, dt) {
   }
   if (c.surf >= 3 && sp > 6) {
     for (const s of [1, -1]) {
-      const [x, wz] = wheel(s, -1.55);
+      const [x, wz] = wheel(s, AXLE_R);
       if (Math.random() < dt * 30) { tmpC.copy(c.surf === 3 ? DUST : GRASS); smoke.spawn(x, 0.25, wz, -fx * sp * 0.2 + (Math.random() - 0.5) * 2, 1 + Math.random() * 2, -fz * sp * 0.2 + (Math.random() - 0.5) * 2, 1.6, 1, 5, c.surf === 3 ? 0.55 : 0.35, tmpC, 1); }
     }
   }
@@ -935,6 +1066,7 @@ function update(dt) {
   if (msgTimer > 0) { msgTimer -= dt; if (msgTimer <= 0) $('msg').classList.remove('show'); }
   pumpRadio();
   if (game.phase === 'idle') return;
+  if (game.phase === 'red') { game.redT -= dt; if (game.redT <= 0) restartFromRed(); return; }
   if (game.phase === 'garage') { p.rpm += (4000 - p.rpm) * Math.min(1, dt * 2); if (keys.w) leaveGarage(); return; }
   if (game.phase === 'lights') {
     game.lightsT += dt;
@@ -957,9 +1089,10 @@ function update(dt) {
       c.inp = inp;
       const prev = c.idx; const wasPit = !!c.pit;
       stepCar(c, inp, h, Tr);
-      if (!c.pit && !wasPit && c.pitReq && crossed(Tr.N, prev, c.idx, Tr.pit.entry) && !c.finished && !c.dnf) {
-        c.pit = { stage: 'in', k: (c.idx - Tr.pit.entry + Tr.N) % Tr.N, lat0: c.lat, wait: 0 }; c.drsOpen = false;
-        if (c.isPlayer) radio('Pit limiter on.', 'info', 2);
+      if (!c.pit && !wasPit && c.inPitRoad && crossed(Tr.N, prev, c.idx, (Tr.pit.entry + Tr.pit.limIn) % Tr.N) && !c.dnf) {
+        if (racing() && c.v > 25.5) addPenalty(c, 5, 'speeding in the pit lane');
+        c.pit = { stage: 'in', k: Tr.pit.limIn, lat0: c.lat, wait: 0, stopAtBox: c.pitReq && !c.finished }; c.drsOpen = false;
+        if (c.isPlayer) radio(c.pit.stopAtBox ? 'Pit limiter on. Crew are ready.' : 'Pit limiter on. Drive-through, we are not stopping.', 'info', 2.5);
       }
       drsLogic(c, prev, Tr);
       pitDecision(c, prev, Tr);
@@ -973,6 +1106,7 @@ function update(dt) {
     if (game.sessionEndAt && game.raceTime >= game.sessionEndAt) { game.sessionEndAt = 0; endQualiSession(); }
   }
   tickT -= dt; if (tickT <= 0) { tickT = 1; engineerTick(); }
+  updateFlags(dt);
   if (isRace() && game.resultsAt && game.raceTime >= game.resultsAt && $('results').classList.contains('hidden')) showResults();
 }
 
@@ -985,8 +1119,10 @@ function updateCarVisuals(dt) {
     c.steering.rotation.z = -c.steer * 0.9;
     const tgtPitch = (c.inp.brake ? 0.012 : 0) - (c.inp.throttle && c.v < 60 ? 0.006 : 0), tgtRoll = -c.steer * Math.min(1, Math.abs(c.v) / 50) * 0.012 + c.dmg.pull * 0.15;
     c.group.rotation.x += (tgtPitch - c.group.rotation.x) * Math.min(1, dt * 6);
-    c.group.rotation.z += (tgtRoll - c.group.rotation.z) * Math.min(1, dt * 6);
-    c.group.position.y = (c.surf === 1 && Math.abs(c.v) > 10) ? Math.sin(performance.now() * 0.08 + c.x) * 0.012 : (c.dmg.punct ? -0.05 : 0);
+    c.roll = (c.roll || 0) + (tgtRoll - (c.roll || 0)) * Math.min(1, dt * 6); c.group.rotation.z = c.roll;
+    const Tb = game.T, bh = bankH(Tb, c.idx, c.lat), inBank = Math.abs(c.lat) < W + KERB + 2 ? Math.atan(Tb.bank[c.idx]) : 0;
+    c.group.rotation.z += inBank;
+    c.group.position.y = bh + ((c.surf === 1 && Math.abs(c.v) > 10) ? Math.sin(performance.now() * 0.08 + c.x) * 0.012 : (c.dmg.punct ? -0.05 : 0));
     const sp = Math.abs(c.v);
     if (c.v < -0.5) { c.gear = -1; c.rpm = 4500 + sp * 400; }
     else {
@@ -1144,7 +1280,24 @@ function updateHUD(dt) {
     if (boardT <= 0) { boardT = 0.25; isRace() ? raceBoard() : qualiBoard(); }
   }
   updateDrsHud();
+  updateProximity(p);
+  const P = Tr.pit, toEntry = ((P.entry - p.idx + Tr.N) % Tr.N) * DS;
+  const hint = $('pitHint');
+  if (p.pitReq && !p.pit && !p.inPitRoad && toEntry < 500) { hint.className = 'on'; hint.textContent = (P.side > 0 ? '◀ PIT ENTRY ' : 'PIT ENTRY ▶ ') + Math.round(toEntry) + 'm'; }
+  else if (p.inPitRoad && !p.pit && ((p.idx - P.entry + Tr.N) % Tr.N) < P.limIn) { hint.className = 'on'; hint.textContent = 'SLOW TO 80 KM/H FOR THE LIMITER LINE'; }
+  else hint.className = 'hidden';
   drawMinimap();
+}
+function updateProximity(p) {
+  let L = 0, R = 0, B = 0; const h = p.h, sh = Math.sin(h), ch = Math.cos(h);
+  for (const o of game.cars) {
+    if (o === p || !o.active || o.pit || !o.group.visible) continue;
+    const dx = o.x - p.x, dz = o.z - p.z, fwd = dx * sh + dz * ch, left = dx * ch - dz * sh;
+    if (fwd < -16 || fwd > 5 || Math.abs(left) > 7) continue;
+    const k = 1 - Math.min(1, Math.abs(fwd) / 16);
+    if (Math.abs(left) > 1.4) { if (left > 0) L = Math.max(L, k); else R = Math.max(R, k); } else if (fwd < -3) B = Math.max(B, k);
+  }
+  $('proxL').style.opacity = L; $('proxR').style.opacity = R; $('proxB').style.opacity = B;
 }
 function raceBoard() {
   const Tr = game.T, p = game.player, st = standings(), L = st[0];
@@ -1292,6 +1445,7 @@ function initMenu() {
   withLoading(() => buildTrack(settings.track));
 }
 function toMenu() {
+  clearSC(); game.flag = null; $('flag').className = 'hidden';
   game.state = 'menu'; game.paused = false; game.phase = 'idle'; game.session = null; audio.set(0, 0, false); clearCars(); smoke.clear(); sparks.clear(); skids.clear();
   weather.N = 0; weather.lines.visible = false; world.setWeather(0, 0);
   ['hud', 'pause', 'results', 'qres', 'strategy', 'garageBar'].forEach(id => $(id).classList.add('hidden')); $('menu').classList.remove('hidden');
@@ -1341,22 +1495,33 @@ function frame(now) {
       update(dt); updateCarVisuals(dt);
       audio.set(game.player.rpm, game.phase === 'lights' ? (keys.w ? 1 : 0) : game.player.inp.throttle, game.phase !== 'idle');
     }
-    updateCamera(dt, clock); updateHUD(dt);
+    if (!window.__camLock) updateCamera(dt, clock);
+    updateHUD(dt);
     focus.set(game.player.x, 0, game.player.z);
   } else {
-    updateMenuCamera(dt);
+    if (!window.__camLock) updateMenuCamera(dt);
     focus.copy(camera.position).setY(0);
   }
   renderWeather(dt);
   world.update(dt, focus, camera);
   renderer.render(scene, camera);
+  updateSound(dt);
+}
+function updateSound(dt) {
+  const p = game.player;
+  if (!(game.state === 'race' && p && !game.paused && game.phase !== 'idle' && game.phase !== 'red')) { sound.update(dt, { on: false }); return; }
+  let rival = null, bd = 60;
+  for (const o of game.cars) { if (o === p || !o.active || !o.group.visible) continue; const d = Math.hypot(o.x - p.x, o.z - p.z); if (d < bd) { bd = d; rival = { rpm: o.rpm, thr: o.inp.throttle, gain: (1 - d / 60) ** 2 * 0.8 }; } }
+  const lock = p.inp.brake > 0.8 && Math.abs(p.v) > 25 && Math.abs(p.steer) > 0.5;
+  sound.update(dt, { on: true, rpm: p.rpm, throttle: game.phase === 'lights' ? (keys.w ? 1 : 0) : p.inp.throttle, gear: p.gear, speed: Math.abs(p.v), kerb: p.surf === 1, slide: Math.max(Math.abs(p.slip) * 2.5, lock ? 0.6 : 0, p.scrub > 0.9 ? 0.4 : 0) * (weather.N && weather.wetAt(p.idx) > 0.3 ? 0.2 : 1), rain: weather.N ? weather.rainAt(p.idx) : 0, impact: p.impact || 0, rival });
+  p.impact = 0;
 }
 initMenu();
 requestAnimationFrame(frame);
 
 // debugging hooks for automated checks
 window.__apex = {
-  game, settings, update, updateCarVisuals, updateCamera, updateHUD, setCam, startWeekend, startRace, startSession, leaveGarage, nextQualiStep, endQualiSession, showStrategy,
+  deployFlag, game, settings, update, updateCarVisuals, updateCamera, updateHUD, setCam, startWeekend, startRace, startSession, leaveGarage, nextQualiStep, endQualiSession, showStrategy,
   buildTrack, getTrack, world, weather, renderer, scene, camera, standings, positionOf, keys, estimateLap, aiPace,
   frameOnce: () => { renderWeather(0.016); world.update(0.016, focus.set(game.player ? game.player.x : 0, 0, game.player ? game.player.z : 0), camera); renderer.render(scene, camera); },
 };
