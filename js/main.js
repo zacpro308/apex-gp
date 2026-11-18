@@ -35,7 +35,11 @@ const CAR_NUMS = [4, 7, 11, 14, 16, 22, 27, 31, 33, 44, 55, 63, 77, 81, 88, 99, 
 const teamIdxOf = di => Math.floor(di / 2) % TEAMS.length;
 const LIVERIES = ['#ffcc00', '#f8fafc', '#ef4444', '#3b82f6', '#10b981', '#a855f7', '#111827'];
 const POINTS = [25, 18, 15, 12, 10, 8, 6, 4, 2, 1];
-const aiPace = s => 0.8 + 0.2 * Math.pow(clamp(s, 0, 100) / 100, 0.8);
+// 100 = right on the limit and slightly over it (they rely on kerbs and run-off); 75 ≈ old Hard
+const aiPace = s => 0.8 + 0.225 * Math.pow(clamp(s, 0, 100) / 100, 0.75);
+// skill 80-100 also get extra grip, braking and power so the very top is genuinely hard to beat
+const aiBoost = s => 1 + BOOST_MAX * Math.pow(clamp((s - 70) / 30, 0, 1), 2);
+const BOOST_MAX = 0.42;
 const GEARS = [0, 22, 33, 44, 54, 64, 74, 84, 200];
 const CAMS = ['COCKPIT', 'T-CAM', 'CHASE'];
 const COMP = {
@@ -113,7 +117,7 @@ const saveSeason = s => store.set('apexgp2-season', JSON.stringify(s));
 function newSeason() {
   const r = rng(Date.now() & 0xfffff);
   const order = DRIVERS.map((d, i) => i).sort(() => r() - 0.5).slice(0, settings.opp);
-  const s = { round: 0, laps: settings.laps, ai: settings.ai, opp: settings.opp, lineup: order.map(di => ({ di, rating: 0.985 + r() * 0.02 })), pts: {}, finished: false };
+  const s = { round: 0, laps: settings.laps, ai: settings.ai, opp: settings.opp, lineup: order.map(di => ({ di, rating: 0.99 + r() * 0.02 })), pts: {}, finished: false };
   s.pts.YOU = 0; order.forEach(di => s.pts[DRIVERS[di][1]] = 0);
   saveSeason(s); return s;
 }
@@ -154,7 +158,7 @@ function makeField(lineup, skill) {
     const tm = TEAMS[teamIdxOf(di)];
     const c = Object.assign(makeCar({ color: mate ? colr : tm.color, accent: mate ? acc : tm.accent, helmet: ['#ffffff', '#ffcc00', '#ff4d4d', '#4da6ff'][di % 4], number: CAR_NUMS[di], compound: 'medium' }),
       { name: DRIVERS[di][0], code: DRIVERS[di][1], team: mate ? 'Your Team' : tm.name, color: mate ? colr : tm.color, isPlayer: false, mate, teamIdx: mate ? TEAMS.length : teamIdxOf(di),
-        pace: Math.min(1.0, aiPace(skill) * L.rating), lateBrake: skill >= 75, rating: L.rating });
+        pace: Math.min(1.03, aiPace(skill) * L.rating), lateBrake: skill >= 70, rating: L.rating, boost: aiBoost(skill) });
     game.cars.push(c); if (mate) game.mate = c;
   });
   for (const c of game.cars) { resetState(c); c.stints = []; scene.add(c.group); }
@@ -181,9 +185,10 @@ function placeGarage(c, Tr) {
 
 /* ---------------- Weekend flow ---------------- */
 let lapEstCache = null;
-function estimateLap(Tr, pace, prof) {
-  let v = prof[0] * pace, t = 0;
-  for (let pass = 0; pass < 2; pass++) { t = 0; for (let i = 0; i < Tr.N; i++) { const lim = prof[(i + 1) % Tr.N] * pace, a = 11.5 * (1 - (v / VMAX) ** 2) - (0.3 + 0.00028 * v * v); const nv = Math.min(lim, Math.sqrt(Math.max(1, v * v + 2 * a * DS))); t += DS / ((v + nv) / 2); v = nv; } }
+function estimateLap(Tr, pace, prof, boost = 1) {
+  const vm = VMAX * Math.sqrt(boost), sp = pace * Math.sqrt(boost);
+  let v = prof[0] * sp, t = 0;
+  for (let pass = 0; pass < 2; pass++) { t = 0; for (let i = 0; i < Tr.N; i++) { const lim = prof[(i + 1) % Tr.N] * sp, a = 11.5 * boost * (1 - (v / vm) ** 2) - (0.3 + 0.00028 * v * v); const nv = Math.min(lim, Math.sqrt(Math.max(1, v * v + 2 * a * DS))); t += DS / ((v + nv) / 2); v = nv; } }
   return t * 1.002; // AI drive almost exactly on the profile
 }
 
@@ -196,7 +201,7 @@ function startWeekend() {
   const r = rng((Date.now() & 0xffff) + 1);
   let lineup = [];
   if (champ) lineup = game.season.lineup.slice();
-  else if (!tt) lineup = DRIVERS.map((d, i) => i).sort(() => r() - 0.5).slice(0, settings.opp).map(di => ({ di, rating: 0.985 + r() * 0.02 }));
+  else if (!tt) lineup = DRIVERS.map((d, i) => i).sort(() => r() - 0.5).slice(0, settings.opp).map(di => ({ di, rating: 0.99 + r() * 0.02 }));
   makeField(lineup, game.skill);
   game.seed = (Date.now() & 0xfffff) + 3;
   game.lapEst = estimateLap(Tr, aiPace(game.skill), Tr.vprof);
@@ -240,7 +245,7 @@ function startSession(kind) {
     const factor = { Q1: 1, Q2: 0.998, Q3: 0.996, Q: 1 }[kind];
     for (const c of entrants) {
       if (c.isPlayer) continue;
-      const base = estimateLap(Tr, c.pace, c.lateBrake ? Tr.vprof2 : Tr.vprof) * factor;
+      const base = estimateLap(Tr, Math.min(1, c.pace), c.lateBrake ? Tr.vprof2 : Tr.vprof, c.boost || 1) * factor * 0.985;
       const wetPen = 1 + 0.16 * weather.average();
       const t = base * wetPen * (1 + (Math.random() - 0.5) * 0.006);
       sess.reveal.push({ c, t, at: 25 + Math.random() * (dur - 30) });
@@ -282,7 +287,7 @@ function nextQualiStep() {
   // simulate remaining sessions without the player
   while (q.idx < q.stages.length) {
     const name = q.stages[q.idx], f = { Q2: 0.998, Q3: 0.996 }[name] || 1;
-    const times = {}; q.entrants.forEach(c => times[c.code] = estimateLap(game.T, c.pace, c.lateBrake ? game.T.vprof2 : game.T.vprof) * f * (1 + (Math.random() - 0.5) * 0.006));
+    const times = {}; q.entrants.forEach(c => times[c.code] = estimateLap(game.T, Math.min(1, c.pace), c.lateBrake ? game.T.vprof2 : game.T.vprof, c.boost || 1) * f * 0.985 * (1 + (Math.random() - 0.5) * 0.006));
     const ent = q.entrants.slice().sort((a, b) => times[a.code] - times[b.code]), elim = q.elim[name] || 0;
     q.results[name] = ent.map(c => ({ c, t: times[c.code] }));
     q.out = ent.slice(ent.length - elim).concat(q.out); q.entrants = ent.slice(0, ent.length - elim);
@@ -393,13 +398,14 @@ function stepCar(c, inp, dt, Tr) {
   const surf = c.surf = surfaceOf(c, Tr), wet = weather.wetAt(c.idx);
   const tg = tyreGrip(c.tyre.comp, c.tyre.wear, wet), d = c.dmg;
   const dmgF = 1 - 0.2 * d.fw - 0.1 * d.susp - (d.punct ? 0.3 : 0);
-  const grip = c.gripNow = GRIP[surf] * tg * dmgF * (surf >= 3 ? 1 - 0.3 * wet : 1);
+  const boost = c.boost || 1;
+  const grip = c.gripNow = GRIP[surf] * tg * dmgF * (surf >= 3 ? 1 - 0.3 * wet : 1) * boost;
   c.gripTD = tg * dmgF;
   let v = c.v;
-  const vm = (c.drsOpen ? VMAX * 1.03 : VMAX) * (1 - 0.05 * d.rw) * (d.punct ? 0.35 : 1);
+  const vm = (c.drsOpen ? VMAX * 1.03 : VMAX) * (1 - 0.05 * d.rw) * (d.punct ? 0.35 : 1) * Math.sqrt(boost);
   if (inp.throttle > 0) {
     if (v < -0.2) v += 28 * dt * inp.throttle;
-    else { const f = 1 - Math.pow(Math.max(v, 0) / vm, 2); v += 11.5 * inp.throttle * Math.max(f, 0) * (surf >= 3 ? 0.55 : 1) * Math.min(1, 0.45 + 0.6 * grip) * dt; }
+    else { const f = 1 - Math.pow(Math.max(v, 0) / vm, 2); v += 11.5 * boost * inp.throttle * Math.max(f, 0) * (surf >= 3 ? 0.55 : 1) * Math.min(1, 0.45 + 0.6 * grip) * dt; }
   }
   if (inp.brake > 0) {
     if (v > 0.4) v = Math.max(0, v - 36 * grip * inp.brake * dt);
@@ -591,25 +597,35 @@ function aiInput(c, dt, Tr) {
   }
   if (c.yieldT > 0) { c.laneTarget = clamp((c.lat >= 0 ? W - 1.6 : -(W - 1.6)) - Tr.race[c.idx], -2 * W, 2 * W); c.blockT = 0.5; }
   c.laneOff += (c.laneTarget - c.laneOff) * Math.min(1, dt * 1.6);
-  const ti = (c.idx + Math.round((10 + Math.max(c.v, 10) * 0.42) / DS)) % N;
-  let off = clamp(Tr.race[ti] + c.laneOff, -(W - 1.2), W - 1.2);
-  const wide = Math.abs(c.lat) - (W - 0.4);
+  // precise line following: short look-ahead + feed-forward of the line's curvature + lateral error correction
+  const sp0 = Math.max(Math.abs(c.v), 5);
+  const ti = (c.idx + Math.round((5 + sp0 * 0.2) / DS)) % N;
+  const edge = W - 0.7;
+  let off = clamp(Tr.race[ti] + c.laneOff, -edge, edge);
+  const wide = Math.abs(c.lat) - (W - 0.1);
   if (wide > 0) off -= Math.sign(c.lat) * Math.min(3, wide * 2);
   let tgtH = Math.atan2(Tr.px[ti] + Tr.nx[ti] * off - c.x, Tr.pz[ti] + Tr.nz[ti] * off - c.z);
   // after a spin, line the car back up with the track before going again
   const trackH = Math.atan2(Tr.tx[c.idx], Tr.tz[c.idx]), facing = Math.abs(angDiff(trackH, c.h));
   if (facing > 1.2 && Math.abs(c.v) < 6) { c.h += angDiff(trackH, c.h) * Math.min(1, dt * 1.5); c.vh = c.h; }
   const err = angDiff(tgtH, c.h) - c.slip * 0.6;
-  c.steer += clamp(clamp(err * 2.6, -1, 1) - c.steer, -8 * dt, 8 * dt);
+  const maxYaw = Math.max(0.05, Math.min(sp0 * Math.tan(0.42) / 3.6, (18 + 0.25 * sp0) * (c.gripNow || 1) / sp0));
+  const ahead = (c.idx + Math.round(sp0 * 0.06 / DS)) % N;
+  const ff = Tr.rk[ahead] * sp0 / maxYaw;
+  const latErr = clamp(Tr.race[c.idx] + c.laneOff, -edge, edge) - c.lat;
+  const want = clamp(ff + err * 2.2 + latErr * 0.05, -1, 1);
+  c.steer += clamp(want - c.steer, -10 * dt, 10 * dt);
   let target = Infinity;
   const prof = c.lateBrake ? Tr.vprof2 : Tr.vprof;
   for (let k = 1; k <= 6; k++) target = Math.min(target, prof[(c.idx + k) % N]);
-  target = Math.min(target * c.pace * Math.sqrt(Math.min(1.04, c.gripTD || 1)) * (c.yieldT > 0 ? 0.9 : 1), follow);
+  // going over the limit only pays in slow corners; in fast sweepers the best AI drive exactly on it
+  const pace = c.pace > 1 ? 1 + (c.pace - 1) * clamp((72 - target) / 30, 0, 1) : c.pace;
+  target = Math.min(target * pace * Math.sqrt(Math.min(1.04, c.gripTD || 1) * (c.boost || 1)) * (c.yieldT > 0 ? 0.9 : 1), follow);
   if (wide > 0) target = Math.min(target, c.v * (1 - Math.min(0.08, wide * 0.03)));
   if (c.surf >= 3) target = Math.min(target, 35);
   if (c.dmg.punct) target = Math.min(target, 28);
   let throttle = 0, brake = 0;
-  if (c.v < target - 0.8) throttle = facing > 1.2 ? 0.4 : 1; else if (c.v > target + 1.2) brake = clamp((c.v - target) / 5, 0.25, 1); else throttle = 0.35;
+  if (c.v < target - 0.25) throttle = facing > 1.2 ? 0.4 : 1; else if (c.v > target + 0.6) brake = clamp((c.v - target) / 3, 0.3, 1); else throttle = 0.7;
   return { throttle, brake, steer: c.steer };
 }
 

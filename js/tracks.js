@@ -170,8 +170,8 @@ function buildTrackData(def) {
   T.limL = smoothLim(limL0); T.limR = smoothLim(limR0);
 
   // racing line
-  const K = 5, M = Math.floor(N / K), maxO = W - 2.1, off = new Float32Array(M), ci = m => m * K;
-  for (let it = 0; it < 500; it++) for (let m = 0; m < M; m++) {
+  const K = 5, M = Math.floor(N / K), maxO = W - 0.9, off = new Float32Array(M), ci = m => m * K;
+  for (let it = 0; it < 900; it++) for (let m = 0; m < M; m++) {
     const a = ci((m - 1 + M) % M), b = ci((m + 1) % M), c = ci(m), oa = off[(m - 1 + M) % M], ob = off[(m + 1) % M];
     const mx = (px[a] + nx[a] * oa + px[b] + nx[b] * ob) / 2, mz = (pz[a] + nz[a] * oa + pz[b] + nz[b] * ob) / 2;
     const o = (mx - px[c]) * nx[c] + (mz - pz[c]) * nz[c];
@@ -181,16 +181,18 @@ function buildTrackData(def) {
   for (let i = 0; i < N; i++) { const m = Math.floor(i / K), f = (i - m * K) / K, a = off[m % M], b = off[(m + 1) % M]; race[i] = a + (b - a) * f; }
   const rx = F(), rz = F();
   for (let i = 0; i < N; i++) { rx[i] = px[i] + nx[i] * race[i]; rz[i] = pz[i] + nz[i] * race[i]; }
-  const kr = F();
+  const kr = F(), rks = F();
   for (let i = 0; i < N; i++) {
     const a = (i - 4 + N) % N, b = (i + 4) % N, ax = rx[a], az = rz[a], bx = rx[i], bz = rz[i], cx = rx[b], cz = rz[b];
     const cross = (bx - ax) * (cz - az) - (bz - az) * (cx - ax);
     const d = Math.hypot(bx - ax, bz - az) * Math.hypot(cx - bx, cz - bz) * Math.hypot(cx - ax, cz - az);
     kr[i] = d > 0 ? Math.abs(2 * cross / d) : 0;
+    rks[i] = d > 0 ? -2 * cross / d : 0;
   }
+  T.rk = new Float32Array(N); for (let i = 0; i < N; i++) { let a = 0; for (let j = -3; j <= 3; j++) a += rks[(i + j + N) % N]; T.rk[i] = a / 7; }
   const vcorner = F();
   for (let i = 0; i < N; i++) {
-    let k = 0; for (let j = -3; j <= 3; j++) k = Math.max(k, kr[(i + j + N) % N]);
+    let k = 0; for (let j = -1; j <= 1; j++) k = Math.max(k, kr[(i + j + N) % N]);
     vcorner[i] = k > 1e-5 ? Math.min(95, (0.25 + Math.sqrt(0.0625 + 4 * k * 18)) / (2 * k)) : 95;
   }
   // braking profiles: cautious (most AI) and late-braking (top-level AI)
@@ -203,7 +205,7 @@ function buildTrackData(def) {
     return v;
   };
   T.vprof = brakeProfile(24);
-  T.vprof2 = brakeProfile(32);
+  T.vprof2 = brakeProfile(34.5);
 
   // DRS: the longest straights get a zone, with a detection point 150 m before activation
   {
