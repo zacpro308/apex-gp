@@ -125,6 +125,9 @@ table.res tr.ko td{color:#ff8a8a}
 .prox.r{right:0;background:linear-gradient(270deg,rgba(255,170,0,.95),rgba(255,170,0,0));clip-path:polygon(100% 50%,0 0,0 100%)}
 .prox.b{left:50%;bottom:0;width:240px;height:26px;transform:translateX(-50%);background:linear-gradient(0deg,rgba(255,170,0,.9),rgba(255,170,0,0));clip-path:polygon(50% 100%,0 0,100% 0)}
 
+#delta{position:absolute;left:50%;top:66px;transform:translateX(-50%);padding:4px 16px;border-radius:8px;background:rgba(10,12,18,.85);border:2px solid var(--green);font-size:26px;font-weight:800;letter-spacing:.06em;font-variant-numeric:tabular-nums;white-space:nowrap}
+#delta span{font-size:15px;color:var(--muted);margin-right:8px;letter-spacing:.14em}
+#delta.ok{border-color:var(--green);color:#4dff86}#delta.close{border-color:#f5b400;color:#ffd24a}#delta.bad{border-color:var(--red);color:#ff6b6b;animation:blink .6s steps(2) infinite}
 #tow{position:absolute;left:50%;bottom:118px;transform:translateX(-50%);padding:3px 12px;border-radius:6px;background:rgba(10,12,18,.8);border:1px solid #7dd3fc;color:#bae6fd;font-size:16px;font-weight:800;letter-spacing:.1em}
 
 /* Overlays */
@@ -216,6 +219,7 @@ table.res tr.me td{background:rgba(255,204,0,.16);color:var(--acc);font-weight:7
   <div id="pitTag" class="hidden"></div>
   <div id="pitHint" class="hidden"></div>
   <div id="flag" class="hidden"></div>
+  <div id="delta" class="hidden"><span>DELTA</span><b id="deltaVal">+0.0</b></div>
   <div id="proxL" class="prox l"></div><div id="proxR" class="prox r"></div><div id="proxB" class="prox b"></div>
   <div id="wx"></div>
   <div id="drs" class="hidden"></div>
@@ -278,6 +282,6 @@ table.res tr.me td{background:rgba(255,204,0,.16);color:var(--acc);font-weight:7
   "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
 } }
 </script>
-<script type="module" src="js/main.js?v=95102603"></script>
+<script type="module" src="js/main.js?v=95106973"></script>
 </body>
 </html>

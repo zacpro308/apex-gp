@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { clamp } from './util.js?v=95102603';
+import { clamp } from './util.js?v=95106973';
 
 export const W = 7;        // road half-width (m)
 export const KERB = 1.4;   // kerb width (m)
