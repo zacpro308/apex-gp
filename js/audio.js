@@ -29,28 +29,41 @@ export class Sound {
     return { f, g };
   }
   makeEngine(level) {
-    // V8 cross-plane: 4 firing pulses per revolution. Layer the firing frequency and its half-order
-    // through a soft clipper and two resonant formants for the raspy scream.
+    // High-revving V8 (up to 18,000 rpm, 4 firing pulses per revolution). Each voice runs at half the
+    // firing frequency with a custom harmonic spectrum: the firing order (2nd harmonic) dominates, with
+    // its overtones for the scream and a little half-order content for growl. Two voices are detuned
+    // slightly against each other (banks of cylinders), then shaped by a high-pass, a presence peak and
+    // a gentle saturation — no square waves, so no buzzy "two-stroke" sound.
     const ctx = this.ctx;
-    const o1 = ctx.createOscillator(), o2 = ctx.createOscillator(), o3 = ctx.createOscillator();
-    o1.type = 'sawtooth'; o2.type = 'square'; o3.type = 'sawtooth';
-    const g1 = ctx.createGain(), g2 = ctx.createGain(), g3 = ctx.createGain(); g1.gain.value = 0.5; g2.gain.value = 0.28; g3.gain.value = 0.22;
+    const amps = [0, 0.12, 1.0, 0.22, 0.62, 0.1, 0.4, 0.05, 0.26, 0.03, 0.14, 0.02, 0.08];
+    const real = new Float32Array(amps.length), imag = new Float32Array(amps);
+    const wave = ctx.createPeriodicWave(real, imag, { disableNormalization: false });
+    const mk = () => { const o = ctx.createOscillator(); o.setPeriodicWave(wave); return o; };
+    const o1 = mk(), o2 = mk();
+    const g1 = ctx.createGain(), g2 = ctx.createGain(); g1.gain.value = 0.55; g2.gain.value = 0.45;
+    // subtle vibrato from uneven combustion
+    const lfo = ctx.createOscillator(), lfoG = ctx.createGain(); lfo.frequency.value = 23; lfoG.gain.value = 3; lfo.connect(lfoG); lfoG.connect(o1.frequency); lfoG.connect(o2.frequency); lfo.start();
+    const hp = ctx.createBiquadFilter(); hp.type = 'highpass'; hp.frequency.value = 140; hp.Q.value = 0.7;
+    const pres = ctx.createBiquadFilter(); pres.type = 'peaking'; pres.frequency.value = 2200; pres.Q.value = 0.9; pres.gain.value = 6;
     const shaper = ctx.createWaveShaper(), curve = new Float32Array(1024);
-    for (let i = 0; i < 1024; i++) { const x = i / 512 - 1; curve[i] = Math.tanh(x * 2.6); }
+    for (let i = 0; i < 1024; i++) { const x = i / 512 - 1; curve[i] = Math.tanh(x * 1.4) / Math.tanh(1.4); }
     shaper.curve = curve;
-    const f1 = ctx.createBiquadFilter(); f1.type = 'peaking'; f1.frequency.value = 900; f1.Q.value = 1.2; f1.gain.value = 9;
-    const f2 = ctx.createBiquadFilter(); f2.type = 'lowpass'; f2.frequency.value = 2400; f2.Q.value = 0.8;
+    const lp = ctx.createBiquadFilter(); lp.type = 'lowpass'; lp.frequency.value = 6000; lp.Q.value = 0.5;
     const out = ctx.createGain(); out.gain.value = 0;
-    o1.connect(g1); o2.connect(g2); o3.connect(g3); g1.connect(shaper); g2.connect(shaper); g3.connect(shaper);
-    shaper.connect(f1); f1.connect(f2); f2.connect(out); out.connect(this.master);
-    o1.start(); o2.start(); o3.start();
-    return { o1, o2, o3, f1, f2, out, level };
+    o1.connect(g1); o2.connect(g2); g1.connect(hp); g2.connect(hp);
+    hp.connect(pres); pres.connect(shaper); shaper.connect(lp); lp.connect(out); out.connect(this.master);
+    o1.start(); o2.start();
+    return { o1, o2, f1: pres, f2: lp, out, level, srpm: 7000 };
   }
   setEngine(e, rpm, thr, gain) {
-    const t = this.ctx.currentTime, fire = rpm / 60 * 4;
-    e.o1.frequency.setTargetAtTime(fire * 0.5, t, 0.02); e.o2.frequency.setTargetAtTime(fire * 0.25, t, 0.02); e.o3.frequency.setTargetAtTime(fire, t, 0.02);
-    e.f1.frequency.setTargetAtTime(500 + rpm * 0.09, t, 0.05); e.f2.frequency.setTargetAtTime(900 + thr * 2600 + rpm * 0.1, t, 0.05);
-    e.out.gain.setTargetAtTime(this.muted ? 0 : gain * e.level * (0.035 + 0.075 * thr), t, 0.04);
+    // the game's rev range (4k-12.5k) is mapped onto a real high-revving V8 range (7k-18k)
+    const t = this.ctx.currentTime, target = 7000 + Math.min(1, Math.max(0, (rpm - 4000) / 8500)) * 11000;
+    e.srpm += (target - e.srpm) * 0.35;
+    const fire = e.srpm / 60 * 4, base = fire / 2;
+    e.o1.frequency.setTargetAtTime(base, t, 0.015); e.o2.frequency.setTargetAtTime(base * 1.0035, t, 0.015);
+    e.f1.frequency.setTargetAtTime(1600 + e.srpm * 0.08, t, 0.05);
+    e.f2.frequency.setTargetAtTime(2500 + thr * 4500 + e.srpm * 0.15, t, 0.05);
+    e.out.gain.setTargetAtTime(this.muted ? 0 : gain * e.level * (0.045 + 0.09 * thr), t, 0.04);
   }
   burst(gain, dur, freq = 1500, q = 1) {
     if (!this.ctx || this.muted) return;
