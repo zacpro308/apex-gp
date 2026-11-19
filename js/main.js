@@ -1,11 +1,11 @@
 import * as THREE from 'three';
-import { W, KERB, DS, TRACKS, getTrack, previewPoints, locate, bankH, elevAt } from './tracks.js?v=95102603';
-import { World } from './world.js?v=95102603';
-import { makeCar, disposeCar, setCompound, makeSafetyCar, loadCarModel, AXLE_F, AXLE_R } from './car.js?v=95102603';
-import { Sound } from './audio.js?v=95102603';
-import { Particles, Skids } from './fx.js?v=95102603';
-import { Weather } from './weather.js?v=95102603';
-import { clamp, angDiff, rng, fmt, store, setMaxAniso, smooth } from './util.js?v=95102603';
+import { W, KERB, DS, TRACKS, getTrack, previewPoints, locate, bankH, elevAt } from './tracks.js?v=95106973';
+import { World } from './world.js?v=95106973';
+import { makeCar, disposeCar, setCompound, makeSafetyCar, loadCarModel, AXLE_F, AXLE_R } from './car.js?v=95106973';
+import { Sound } from './audio.js?v=95106973';
+import { Particles, Skids } from './fx.js?v=95106973';
+import { Weather } from './weather.js?v=95106973';
+import { clamp, angDiff, rng, fmt, store, setMaxAniso, smooth } from './util.js?v=95106973';
 
 const $ = id => document.getElementById(id);
 const VMAX = 100;
@@ -917,7 +917,7 @@ function deployFlag(type, why) {
   if (!racing() || game.flag || game.phase !== 'race') return;
   if (type === 'red') return redFlag(why);
   const p = game.player;
-  game.flag = { type, t: game.raceTime, end: type === 'vsc' ? game.raceTime + 30 + Math.random() * 20 : Infinity, ahead: new Set(standings().slice(0, Math.max(0, positionOf(p) - 1)).map(c => c.code)), vscOver: 0, passT: 0 };
+  game.flag = { type, t: game.raceTime, end: type === 'vsc' ? game.raceTime + 30 + Math.random() * 20 : Infinity, ahead: new Set(standings().slice(0, Math.max(0, positionOf(p) - 1)).map(c => c.code)), vscOver: 0, passT: 0, delta: 1.0, deltaLow: 0, dProg: null };
   for (const c of game.cars) { c.drsOpen = false; c.drsArmed = -1; }
   if (type === 'vsc') { radio('Virtual Safety Car: ' + why + '. Slow down and keep to the delta.', 'warn', 6); flagBanner('VIRTUAL SAFETY CAR', 'vsc'); }
   else {
@@ -929,21 +929,23 @@ function deployFlag(type, why) {
   }
 }
 function clearFlag() {
-  game.flag = null; game.drsHoldLap = standings()[0].maxDone + 1;
+  game.flag = null; $('delta').className = 'hidden'; game.drsHoldLap = standings()[0].maxDone + 1;
   flagBanner('GREEN FLAG', 'green'); setTimeout(() => { if (!game.flag) $('flag').className = 'hidden'; }, 2500);
   radio('Green flag! Racing resumes.', 'good', 4);
 }
 function updateFlags(dt) {
-  const f = game.flag; if (!f || !racing()) return;
+  const f = game.flag; if (!f || !racing()) { if ($('delta').className !== 'hidden') $('delta').className = 'hidden'; return; }
   const Tr = game.T, st = standings(), L = st[0], p = game.player;
   if (f.type === 'vsc') {
     if (game.raceTime > f.end - 6 && !f.ending) { f.ending = true; radio('VSC ending. Get ready to go.', 'info', 4); flagBanner('VSC ENDING', 'vsc'); }
-    // the player must stay under the VSC delta speed
-    if (!p.pit && Math.abs(p.v) > Math.max(20, Tr.vprof[p.idx] * 0.6) + 3) { f.vscOver += dt; if (f.vscOver > 2 && !f.warned) { f.warned = true; radio('Too fast under the VSC. Slow down!', 'bad', 3); } if (f.vscOver > 6 && !f.penal) { f.penal = true; addPenalty(p, 5, 'exceeding the VSC delta'); } }
+    // the player must keep the delta positive (slower than the VSC reference lap)
+    deltaStep(f, p, Tr, dt, true);
     if (game.raceTime >= f.end) clearFlag();
     return;
   }
   if (f.type === 'sc') {
+    // until the player has caught the queue, they must also keep to the Safety Car delta
+    deltaStep(f, p, Tr, dt, !closeBehind(p));
     if (sc) {
       const gapS = (sc.prog - L.prog) * DS;
       const i = Math.floor(((sc.prog % Tr.N) + Tr.N) % Tr.N) % Tr.N;
@@ -965,7 +967,32 @@ function updateFlags(dt) {
     } else { f.passT = 0; f.toldBack = false; }
   }
 }
+/* F1-style delta: time taken since the flag minus the reference time for the same distance at the
+   VSC / Safety Car reference pace. Positive = slower than the reference (fine), negative = too fast. */
+function refSpeed(f, Tr, i) { return f.type === 'vsc' ? Math.max(20, Tr.vprof[i] * 0.6) * 1.03 : Math.min(56, Tr.vprof[i] * 0.64); }
+function closeBehind(c) {
+  for (const o of game.cars) { if (o === c || !o.active || o.dnf || o.pit) continue; const d = (o.prog - c.prog) * DS; if (d > 0 && d < 150) return true; }
+  return sc ? (sc.prog - c.prog) * DS > 0 && (sc.prog - c.prog) * DS < 150 : false;
+}
+function deltaStep(f, p, Tr, dt, enforce) {
+  const el = $('delta');
+  if (p.pit || p.dnf || p.finished) { f.dProg = null; el.className = 'hidden'; return; }
+  if (f.dProg === null) f.dProg = p.prog;
+  const ds = Math.max(0, p.prog - f.dProg) * DS; f.dProg = p.prog;
+  f.delta += dt - ds / refSpeed(f, Tr, p.idx);
+  f.delta = Math.min(f.delta, 9.9);
+  const d = f.delta;
+  el.className = d >= 0.3 ? 'ok' : d >= -0.3 ? 'close' : 'bad';
+  $('deltaVal').textContent = (d >= 0 ? '+' : '−') + Math.abs(d).toFixed(1);
+  if (!enforce) { f.deltaLow = 0; return; }
+  if (d < -0.3) {
+    f.deltaLow += dt;
+    if (f.deltaLow > 1.5 && !f.warned) { f.warned = true; radio('Delta is negative. Slow down and get back above the delta!', 'bad', 4); }
+    if (f.deltaLow > 5 && !f.penal) { f.penal = true; addPenalty(p, 5, f.type === 'vsc' ? 'not respecting the VSC delta' : 'not respecting the Safety Car delta'); }
+  } else f.deltaLow = Math.max(0, f.deltaLow - dt);
+}
 function redFlag(why) {
+  $('delta').className = 'hidden';
   game.flag = { type: 'red', t: game.raceTime }; game.phase = 'red'; game.redT = 4;
   if (sc) { scene.remove(scObj.group); sc = null; }
   radio('RED FLAG: ' + why + '. Session suspended, back to the grid.', 'bad', 8); flagBanner('RED FLAG', 'red');
@@ -1641,7 +1668,7 @@ function updateSound(dt) {
   sound.update(dt, { on: true, rpm: p.rpm, throttle: game.phase === 'lights' ? (keys.w ? 1 : 0) : p.inp.throttle, gear: p.gear, speed: Math.abs(p.v), kerb: p.surf === 1, slide: Math.max(Math.abs(p.slip) * 2.5, lock ? 0.6 : 0, p.scrub > 0.9 ? 0.4 : 0) * (weather.N && weather.wetAt(p.idx) > 0.3 ? 0.2 : 1), rain: weather.N ? weather.rainAt(p.idx) : 0, impact: p.impact || 0, rival });
   p.impact = 0;
 }
-await loadCarModel('js/car.bin?v=95102603');
+await loadCarModel('js/car.bin?v=95106973');
 initMenu();
 requestAnimationFrame(frame);
 
