@@ -1,13 +1,14 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
-import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { mergeGeometries, toCreasedNormals } from 'three/addons/utils/BufferGeometryUtils.js';
 import { canvasTex } from './util.js';
 
 /* A generic open-wheeler built to the shape of the 2025 technical rules:
    ground-effect floor, undercut sidepods with downwash ramps, 4-element front wing,
    18" wheels with covers and wake deflectors, swept rear-wing tips and a beam wing.
    Front axle z = +1.80, rear axle z = -1.80 (3.6 m wheelbase), overall ~5.6 m. */
-export const AXLE_F = 1.8, AXLE_R = -1.8, TRACK_F = 0.8, TRACK_R = 0.79;
+export let AXLE_F = 1.8, AXLE_R = -1.8;
+export const TRACK_F = 0.8, TRACK_R = 0.79;
 
 /* Lofted body: sections [z, halfWidth, halfHeight, centreY, superellipseExponent, xOffset?] */
 function loft(secs, segs = 28) {
@@ -164,6 +165,7 @@ export function makeCar({ color, accent, helmet = '#ffffff', number = 1, compoun
   };
   const shadow = new THREE.Mesh(SHADOW, SHADOW_MAT); shadow.position.y = 0.025; shadow.renderOrder = 1; g.add(shadow);
   const fwing = new THREE.Group(), rwing = new THREE.Group(); g.add(fwing, rwing);
+  if (EXT) return makeExtCar(g, fwing, rwing, mats, compound);
   for (const k in M.merged) {
     const part = k.startsWith('fw_') ? fwing : k.startsWith('rw_') ? rwing : g, mk = k.replace(/^(fw|rw)_/, '');
     part.add(new THREE.Mesh(M.merged[k], mats[mk]));
@@ -193,6 +195,65 @@ export function makeCar({ color, accent, helmet = '#ffffff', number = 1, compoun
   steering.visible = false;
   return { group: g, wheels, helmet: helmetMesh, steering, cockpitHide: [helmetMesh], mats, numTex: tex, stripes, fwing, rwing };
 }
+
+/* ---- Licensed car model (generic, brandless) ----
+   Stored in the game's own encrypted format (js/car.bin) so the original model file is not
+   downloadable from the site, as its royalty-free licence requires. */
+let EXT = null;
+export async function loadCarModel(url) {
+  try {
+    const res = await fetch(url); if (!res.ok) return false;
+    const all = new Uint8Array(await res.arrayBuffer());
+    if (String.fromCharCode(...all.slice(0, 4)) !== 'AGP1') return false;
+    const metaLen = new DataView(all.buffer).getUint32(4, true);
+    const body = all.slice(8);
+    let st = 0x9E3779B9 >>> 0;
+    for (let i = 0; i < body.length; i++) { st ^= st << 13; st >>>= 0; st ^= st >>> 17; st ^= st << 5; st >>>= 0; body[i] ^= st & 255; }
+    const meta = JSON.parse(new TextDecoder().decode(body.slice(0, metaLen)));
+    const base = metaLen + (4 - (metaLen % 4)) % 4, ab = body.buffer;
+    const parts = {};
+    for (const p of meta.parts) {
+      const geo = new THREE.BufferGeometry();
+      geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(ab.slice(base + p.posOff, base + p.posOff + p.nPos * 4)), 3));
+      const I = p.i32 ? new Uint32Array(ab.slice(base + p.idxOff, base + p.idxOff + p.nIdx * 4)) : new Uint16Array(ab.slice(base + p.idxOff, base + p.idxOff + p.nIdx * 2));
+      geo.setIndex(new THREE.BufferAttribute(I, 1));
+      // smooth shading on curved panels, sharp shading across hard edges
+      parts[p.name] = { geo: toCreasedNormals(geo, Math.PI / 5), hub: p.hub };
+    }
+    EXT = { meta, parts };
+    AXLE_F = meta.axleF; AXLE_R = meta.axleR;
+    buildModel();
+    return true;
+  } catch (e) { console.warn('car model failed to load, using built-in car', e); return false; }
+}
+function makeExtCar(g, fwing, rwing, mats, compound) {
+  const M = MODEL, P = EXT.parts, R = EXT.meta.R;
+  // painted (not metallic) livery
+  mats.body.metalness = 0.05; mats.body.roughness = 0.42; mats.body.clearcoatRoughness = 0.18;
+  mats.acc.metalness = 0.05; mats.acc.roughness = 0.45;
+  const add = (name, mat, parent) => { if (P[name]) parent.add(new THREE.Mesh(P[name].geo, mat)); };
+  add('body', mats.body, g); add('acc', mats.acc, g); add('carbon', CARBON, g);
+  add('fw_acc', mats.acc, fwing); add('fw_carbon', CARBON, fwing); add('rw_acc', mats.acc, rwing);
+  const wheels = [], stripes = [];
+  for (const key of ['wFL', 'wFR', 'wRL', 'wRR']) {
+    const w = P[key]; if (!w) continue;
+    const pivot = new THREE.Group(); pivot.position.set(...w.hub); g.add(pivot);
+    const spin = new THREE.Group(); pivot.add(spin);
+    spin.add(new THREE.Mesh(w.geo, EXT_TYRE));
+    // compound stripe on the outer sidewall
+    const sx = Math.sign(w.hub[0]), st = new THREE.Mesh(EXT_STRIPE, M.wheelMats[compound]); st.position.x = sx * (key[1] === 'F' ? 0.15 : 0.2); spin.add(st); stripes.push(st);
+    wheels.push({ pivot, spin, front: key[1] === 'F' });
+  }
+  const steering = new THREE.Group(); steering.position.set(0, 0.62, 0.55); steering.rotation.x = -0.55; g.add(steering);
+  steering.add(new THREE.Mesh(SW, DARK));
+  for (const sx of [1, -1]) { const gr = new THREE.Mesh(SW_GRIP, CARBON); gr.position.set(sx * 0.15, -0.01, 0); steering.add(gr); }
+  const scr = new THREE.Mesh(SW_SCREEN, SCREEN_MAT); scr.position.set(0, 0.015, -0.026); scr.rotation.y = Math.PI; steering.add(scr);
+  steering.visible = false;
+  const numTex = new THREE.Texture();
+  return { group: g, wheels, helmet: new THREE.Group(), steering, cockpitHide: [], mats, numTex, stripes, fwing, rwing };
+}
+const EXT_TYRE = new THREE.MeshStandardMaterial({ color: 0x1b1c1f, roughness: 0.75, metalness: 0.15 });
+const EXT_STRIPE = new THREE.TorusGeometry(0.31, 0.008, 4, 40).rotateY(Math.PI / 2);
 
 export function setCompound(c, comp) { const m = MODEL.wheelMats[comp] || MODEL.wheelMats.medium; c.stripes.forEach(s => s.material = m); }
 export function disposeCar(c) { c.mats.body.dispose(); c.mats.acc.dispose(); c.numTex.dispose(); }

@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { W, KERB, DS, TRACKS, getTrack, previewPoints, locate, bankH } from './tracks.js';
 import { World } from './world.js';
-import { makeCar, disposeCar, setCompound, makeSafetyCar, AXLE_F, AXLE_R } from './car.js';
+import { makeCar, disposeCar, setCompound, makeSafetyCar, loadCarModel, AXLE_F, AXLE_R } from './car.js';
 import { Sound } from './audio.js';
 import { Particles, Skids } from './fx.js';
 import { Weather } from './weather.js';
@@ -1154,10 +1154,10 @@ function updateCamera(dt, time) {
   const sp = Math.abs(c.v), shake = (c.surf === 1 ? 0.012 : 0.002) * Math.min(1, sp / 60);
   const jx = (Math.random() - 0.5) * shake, jy = (Math.random() - 0.5) * shake;
   if (game.camMode === 0) {
-    g.localToWorld(tmpV.set(jx, 0.82 + jy, 0.28)); g.localToWorld(tmpL.set(c.steer * 0.6, 0.86, 14));
+    g.localToWorld(tmpV.set(jx, 0.92 + jy, 0.05)); g.localToWorld(tmpL.set(c.steer * 0.6, 0.95, 14));
     camera.position.copy(tmpV); camera.lookAt(tmpL); camera.fov = 72;
   } else if (game.camMode === 1) {
-    g.localToWorld(tmpV.set(jx, 1.25 + jy, -0.42)); g.localToWorld(tmpL.set(0, 0.75, 12));
+    g.localToWorld(tmpV.set(jx, 1.36 + jy, -0.5)); g.localToWorld(tmpL.set(0, 0.8, 12));
     camera.position.copy(tmpV); camera.lookAt(tmpL); camera.fov = 68;
   } else {
     // chase cam follows the direction of travel so slides are visible
@@ -1516,6 +1516,7 @@ function updateSound(dt) {
   sound.update(dt, { on: true, rpm: p.rpm, throttle: game.phase === 'lights' ? (keys.w ? 1 : 0) : p.inp.throttle, gear: p.gear, speed: Math.abs(p.v), kerb: p.surf === 1, slide: Math.max(Math.abs(p.slip) * 2.5, lock ? 0.6 : 0, p.scrub > 0.9 ? 0.4 : 0) * (weather.N && weather.wetAt(p.idx) > 0.3 ? 0.2 : 1), rain: weather.N ? weather.rainAt(p.idx) : 0, impact: p.impact || 0, rival });
   p.impact = 0;
 }
+await loadCarModel('js/car.bin');
 initMenu();
 requestAnimationFrame(frame);
 
