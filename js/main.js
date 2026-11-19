@@ -1,11 +1,11 @@
 import * as THREE from 'three';
-import { W, KERB, DS, TRACKS, getTrack, previewPoints, locate, bankH } from './tracks.js?v=72605544';
-import { World } from './world.js?v=72605544';
-import { makeCar, disposeCar, setCompound, makeSafetyCar, loadCarModel, AXLE_F, AXLE_R } from './car.js?v=72605544';
-import { Sound } from './audio.js?v=72605544';
-import { Particles, Skids } from './fx.js?v=72605544';
-import { Weather } from './weather.js?v=72605544';
-import { clamp, angDiff, rng, fmt, store, setMaxAniso, smooth } from './util.js?v=72605544';
+import { W, KERB, DS, TRACKS, getTrack, previewPoints, locate, bankH } from './tracks.js?v=72906487';
+import { World } from './world.js?v=72906487';
+import { makeCar, disposeCar, setCompound, makeSafetyCar, loadCarModel, AXLE_F, AXLE_R } from './car.js?v=72906487';
+import { Sound } from './audio.js?v=72906487';
+import { Particles, Skids } from './fx.js?v=72906487';
+import { Weather } from './weather.js?v=72906487';
+import { clamp, angDiff, rng, fmt, store, setMaxAniso, smooth } from './util.js?v=72906487';
 
 const $ = id => document.getElementById(id);
 const VMAX = 100;
@@ -1355,6 +1355,7 @@ function updateHUD(dt) {
   updateDrsHud();
   updateProximity(p);
   const P = Tr.pit, toEntry = ((P.entry - p.idx + Tr.N) % Tr.N) * DS;
+  if (world.pitGuide) world.pitGuide.visible = !!(p.pitReq && !p.pit && !p.dnf);
   const hint = $('pitHint');
   if (p.pitReq && !p.pit && !p.inPitRoad && toEntry < 500) { hint.className = 'on'; hint.textContent = (P.side > 0 ? '◀ PIT ENTRY ' : 'PIT ENTRY ▶ ') + Math.round(toEntry) + 'm'; }
   else if (p.inPitRoad && !p.pit && ((p.idx - P.entry + Tr.N) % Tr.N) < P.limIn) { hint.className = 'on'; hint.textContent = 'SLOW TO 80 KM/H FOR THE LIMITER LINE'; }
@@ -1589,7 +1590,7 @@ function updateSound(dt) {
   sound.update(dt, { on: true, rpm: p.rpm, throttle: game.phase === 'lights' ? (keys.w ? 1 : 0) : p.inp.throttle, gear: p.gear, speed: Math.abs(p.v), kerb: p.surf === 1, slide: Math.max(Math.abs(p.slip) * 2.5, lock ? 0.6 : 0, p.scrub > 0.9 ? 0.4 : 0) * (weather.N && weather.wetAt(p.idx) > 0.3 ? 0.2 : 1), rain: weather.N ? weather.rainAt(p.idx) : 0, impact: p.impact || 0, rival });
   p.impact = 0;
 }
-await loadCarModel('js/car.bin?v=72605544');
+await loadCarModel('js/car.bin?v=72906487');
 initMenu();
 requestAnimationFrame(frame);
 

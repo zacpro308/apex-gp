@@ -1,8 +1,8 @@
 import * as THREE from 'three';
 import { Sky } from 'three/addons/objects/Sky.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { W, KERB, DS, bankH } from './tracks.js?v=72605544';
-import { rng, makeNoise, canvasTex, normalTex, noiseFill, smooth, clamp } from './util.js?v=72605544';
+import { W, KERB, DS, bankH } from './tracks.js?v=72906487';
+import { rng, makeNoise, canvasTex, normalTex, noiseFill, smooth, clamp } from './util.js?v=72906487';
 
 const TMP_GREY = new THREE.Color('#8b939c');
 const AD_WORDS = ['APEX GP', 'NOVA FUEL', 'KITE TYRES', 'ORBITAL', 'HELIX', 'SUMMIT', 'VOLTA', 'RAPIDE', 'ZENITH', 'TORQUE+'];
@@ -307,6 +307,18 @@ export class World {
       this.raceLine = add(g, new THREE.MeshBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.55, depthWrite: false, toneMapped: false }), { recv: false });
       this.raceLine.renderOrder = 2;
       this.raceLine.visible = !!this.showLine;
+    }
+    /* ----- pit-entry guide line (shown when the player is boxing) ----- */
+    {
+      const P = T.pit, edge = P.side * (W + 0.6), lead = 80, len = lead + P.limIn + 4;
+      const latAt = i => {
+        const before = (P.entry - i + N) % N, kk = (i - P.entry + N) % N;
+        if (before > 0 && before <= lead) return T.race[i] + (edge - T.race[i]) * smooth(lead, 0, before);
+        return edge + (P.fast - edge) * smooth(0, P.limIn - 6, kk);
+      };
+      const g = ribbon(T, (P.entry - lead + N) % N, len, [i => [latAt(i) + 0.5, 0.05, 0], i => [latAt(i) - 0.5, 0.05, 1]], 4);
+      this.pitGuide = add(g, new THREE.MeshBasicMaterial({ color: new THREE.Color('#1fa2ff').multiplyScalar(1.6), transparent: true, opacity: 0.9, depthWrite: false, toneMapped: false, fog: false }), { recv: false });
+      this.pitGuide.renderOrder = 3; this.pitGuide.visible = false;
     }
     /* ----- DRS detection / activation lines and boards ----- */
     {
