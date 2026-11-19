@@ -1,8 +1,8 @@
 import * as THREE from 'three';
 import { Sky } from 'three/addons/objects/Sky.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { W, KERB, DS, bankH } from './tracks.js?v=95100797';
-import { rng, makeNoise, canvasTex, normalTex, noiseFill, smooth, clamp } from './util.js?v=95100797';
+import { W, KERB, DS, bankH } from './tracks.js?v=95101248';
+import { rng, makeNoise, canvasTex, normalTex, noiseFill, smooth, clamp } from './util.js?v=95101248';
 
 const TMP_GREY = new THREE.Color('#8b939c');
 const AD_WORDS = ['APEX GP', 'NOVA FUEL', 'KITE TYRES', 'ORBITAL', 'HELIX', 'SUMMIT', 'VOLTA', 'RAPIDE', 'ZENITH', 'TORQUE+'];
@@ -390,8 +390,13 @@ export class World {
       });
       const pitSide = ps;
       {
-        const body = mergeGeometries([new THREE.BoxGeometry(0.42, 0.9, 0.26).translate(0, 0.45, 0), new THREE.BoxGeometry(0.5, 0.65, 0.3).translate(0, 1.22, 0), new THREE.SphereGeometry(0.15, 10, 8).translate(0, 1.7, 0)]);
+        const body = mergeGeometries([
+          new THREE.BoxGeometry(0.15, 0.86, 0.17).translate(-0.11, 0.43, 0), new THREE.BoxGeometry(0.15, 0.86, 0.17).translate(0.11, 0.43, 0),
+          new THREE.BoxGeometry(0.44, 0.62, 0.26).translate(0, 1.17, 0),
+          new THREE.BoxGeometry(0.12, 0.62, 0.13).translate(-0.29, 1.12, 0), new THREE.BoxGeometry(0.12, 0.62, 0.13).translate(0.29, 1.12, 0),
+          new THREE.SphereGeometry(0.16, 12, 10).translate(0, 1.66, 0)]);
         const teams = teamColors.length + 1, per = 14;
+        this.crewColors = teamColors.concat(['#ffcc00']); this.crewG = G; this.stopCrews = new Map();
         this.crew = new THREE.InstancedMesh(body, new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.7 }), teams * per);
         this.crewInfo = { T, per, teams };
         const tc2 = new THREE.Color();
@@ -519,17 +524,30 @@ export class World {
   }
 
   /* place a team's pit crew: idle by the garage, or around the car (stopped at its box) */
-  crewPose(team, active) {
+  /* active=true: the team's stop crew comes out to the box (car = the car being serviced, for its wheel positions);
+     active=null: they go back to standing by the garage */
+  crewPose(team, active, car) {
     if (!this.crew) return;
     const { T, per } = this.crewInfo, P = T.pit, ps = P.side, N = T.N;
     const box = (P.boxStart + team * P.boxGap) % N, tx = T.tx[box], tz = T.tz[box], nx = T.nx[box] * ps, nz = T.nz[box] * ps;
     const bx = T.px[box] + T.nx[box] * P.lat, bz = T.pz[box] + T.nz[box] * P.lat, h = Math.atan2(tx, tz);
-    const spots = active ? [[1.8, 1.4, 0.65], [1.8, -1.4, 0.65], [-1.8, 1.4, 0.65], [-1.8, -1.4, 0.65], [2.3, 1.95, 1], [2.3, -1.95, 1], [-2.3, 1.95, 1], [-2.3, -1.95, 1], [1.3, 1.95, 1], [1.3, -1.95, 1], [-1.3, 1.95, 1], [-1.3, -1.95, 1], [3.5, 0, 1], [-3.1, 0, 1]]
-      : Array.from({ length: per }, (_, k) => [(k - per / 2) * 0.8, 3.6 + (k % 2) * 0.7, 1]);
     const d = new THREE.Object3D();
-    spots.forEach(([along, side, sy], k) => { d.position.set(bx + tx * along + nx * side, 0, bz + tz * along + nz * side); d.rotation.set(0, active ? Math.atan2(-nx * side, -nz * side) : h + Math.PI / 2 * -ps, 0); d.scale.set(1, sy, 1); d.updateMatrix(); this.crew.setMatrixAt(team * per + k, d.matrix); });
+    for (let k = 0; k < per; k++) {
+      const along = (k - per / 2) * 0.8, side = 3.6 + (k % 2) * 0.7;
+      d.position.set(bx + tx * along + nx * side, 0, bz + tz * along + nz * side); d.rotation.set(0, h + Math.PI / 2 * -ps, 0);
+      d.scale.setScalar(active ? 0 : 1); d.updateMatrix(); this.crew.setMatrixAt(team * per + k, d.matrix);
+    }
     this.crew.instanceMatrix.needsUpdate = true;
+    let sc = this.stopCrews.get(team);
+    if (active) {
+      if (!sc) { sc = buildStopCrew(this.crewColors[team] || '#ffcc00', ps); this.stopCrews.set(team, sc); this.crewG.add(sc.g); }
+      if (car) sc.setCar(car);
+      sc.g.position.set(bx, 0, bz); sc.g.rotation.set(0, h, 0); sc.g.visible = true; sc.anim(-1);
+    } else if (sc) sc.g.visible = false;
   }
+  /* s < 0: waiting for the car; 0..1: through the stop; > 1: car released */
+  crewAnim(team, s) { const sc = this.stopCrews && this.stopCrews.get(team); if (sc && sc.g.visible) sc.anim(s); }
+  resetCrews() { if (!this.crew) return; for (let t = 0; t < this.crewInfo.teams; t++) this.crewPose(t, null); }
 
   setRaceLine(on) { this.showLine = on; if (this.raceLine) this.raceLine.visible = on; }
 
@@ -543,3 +561,143 @@ export class World {
     this.sun.position.copy(focus).addScaledVector(this.sunDir, 400); this.sun.target.position.copy(focus);
   }
 }
+
+/* ------------------------------------------------------------------
+   Pit stop crew: 17 people in team overalls with helmets. Wheel-gun
+   operators, tyre-off and tyre-on carriers, front and rear jacks,
+   two stabilisers and a release man with a lollipop board.
+   Positions are in the car's frame: +z forward, +x towards the garage
+   when ps > 0.
+   ------------------------------------------------------------------ */
+const CREW_MATS = {};
+function crewMats(color) {
+  if (!CREW_MATS[color]) CREW_MATS[color] = {
+    suit: new THREE.MeshStandardMaterial({ color, roughness: 0.75 }),
+    trim: new THREE.MeshStandardMaterial({ color: '#f2f4f7', roughness: 0.7 }),
+    dark: new THREE.MeshStandardMaterial({ color: '#16181d', roughness: 0.6 }),
+    helmet: new THREE.MeshStandardMaterial({ color, roughness: 0.25, metalness: 0.2 }),
+    visor: new THREE.MeshStandardMaterial({ color: '#0b0d12', roughness: 0.1, metalness: 0.6 }),
+    steel: new THREE.MeshStandardMaterial({ color: '#9aa3ad', roughness: 0.35, metalness: 0.8 }),
+    tyre: new THREE.MeshStandardMaterial({ color: '#131417', roughness: 0.9 }),
+    rim: new THREE.MeshStandardMaterial({ color: '#2b2f36', roughness: 0.4, metalness: 0.7 }),
+    red: new THREE.MeshStandardMaterial({ color: '#e11d1d', roughness: 0.5, emissive: '#e11d1d', emissiveIntensity: 0.25 }),
+    green: new THREE.MeshStandardMaterial({ color: '#16c35a', roughness: 0.5, emissive: '#16c35a', emissiveIntensity: 0.35 }),
+  };
+  return CREW_MATS[color];
+}
+const box = (w, h, d, m, x = 0, y = 0, z = 0) => { const o = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m); o.position.set(x, y, z); o.castShadow = true; return o; };
+function makeTyre(M) {
+  const g = new THREE.Group();
+  const t = new THREE.Mesh(new THREE.CylinderGeometry(0.36, 0.36, 0.36, 20), M.tyre); t.rotation.z = Math.PI / 2; t.castShadow = true;
+  const r = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.22, 0.37, 16), M.rim); r.rotation.z = Math.PI / 2;
+  g.add(t, r); return g;
+}
+function makePerson(M) {
+  const g = new THREE.Group(), hips = new THREE.Group(); hips.position.y = 0.86; g.add(hips);
+  const leg = x => { const p = new THREE.Group(); p.position.set(x, 0, 0); p.add(box(0.15, 0.82, 0.17, M.suit, 0, -0.41, 0), box(0.16, 0.08, 0.27, M.dark, 0, -0.82, 0.04)); hips.add(p); return p; };
+  const legL = leg(-0.11), legR = leg(0.11);
+  const torso = new THREE.Group(); hips.add(torso);
+  torso.add(box(0.44, 0.62, 0.26, M.suit, 0, 0.31, 0), box(0.45, 0.07, 0.27, M.trim, 0, 0.06, 0), box(0.06, 0.5, 0.272, M.trim, 0, 0.33, 0));
+  const arm = x => { const p = new THREE.Group(); p.position.set(x, 0.56, 0); p.add(box(0.12, 0.6, 0.13, M.suit, 0, -0.3, 0), box(0.13, 0.12, 0.14, M.dark, 0, -0.64, 0)); torso.add(p); return p; };
+  const armL = arm(-0.29), armR = arm(0.29);
+  const head = new THREE.Mesh(new THREE.SphereGeometry(0.165, 14, 12), M.helmet); head.position.y = 0.8; head.castShadow = true;
+  const visor = box(0.22, 0.08, 0.06, M.visor, 0, 0.81, 0.13);
+  torso.add(head, visor);
+  return { g, hips, torso, legL, legR, armL, armR };
+}
+const lerp = (a, b, t) => a + (b - a) * t;
+const seg = (s, a, b) => clamp((s - a) / (b - a), 0, 1);
+const ease = t => t * t * (3 - 2 * t);
+
+function buildStopCrew(color, ps) {
+  const M = crewMats(color), g = new THREE.Group(), people = [];
+  let wx = 1.0, af = 1.75, ar = -1.85, nose = 3.4, tail = -2.7;
+  const add = role => { const p = makePerson(M); p.role = role; g.add(p.g); people.push(p); return p; };
+  // equipment
+  const gun = () => { const q = new THREE.Group(); q.add(box(0.11, 0.11, 0.34, M.steel, 0, 0, 0.12), box(0.07, 0.16, 0.07, M.dark, 0, -0.1, -0.02), box(0.05, 0.05, 0.16, M.dark, 0, 0, -0.12)); q.position.set(0, -0.66, 0.05); q.rotation.x = Math.PI / 2; return q; };
+  const jackBar = () => { const q = new THREE.Group(); q.add(box(0.06, 0.06, 1.5, M.steel, 0, 0, 0.75), box(0.5, 0.08, 0.14, M.dark, 0, 0, 1.5), box(0.36, 0.06, 0.06, M.dark, 0, 0, 0)); return q; };
+  const wheels = [];
+  for (const sx of [1, -1]) for (const front of [true, false]) {
+    const w = { sx, front };
+    w.gunner = add('gun'); w.gun = gun(); w.gunner.armR.add(w.gun);
+    w.off = add('off'); w.oldTyre = makeTyre(M); g.add(w.oldTyre);
+    w.on = add('on'); w.newTyre = makeTyre(M); g.add(w.newTyre);
+    wheels.push(w);
+  }
+  const fj = add('fjack'), rj = add('rjack');
+  const fBar = jackBar(), rBar = jackBar(); g.add(fBar, rBar);
+  const stabs = [add('stab'), add('stab')];
+  const rel = add('release');
+  const lolly = new THREE.Group(); lolly.add(box(0.04, 1.3, 0.04, M.dark, 0, 0.65, 0));
+  const signR = new THREE.Mesh(new THREE.CylinderGeometry(0.26, 0.26, 0.03, 20), M.red), signG = new THREE.Mesh(new THREE.CylinderGeometry(0.26, 0.26, 0.03, 20), M.green);
+  for (const sg of [signR, signG]) { sg.rotation.z = Math.PI / 2; sg.position.y = 1.4; lolly.add(sg); }
+  rel.armR.add(lolly); lolly.position.set(0, -0.66, 0.04); lolly.rotation.x = Math.PI;
+
+  const face = (p, dx, dz) => { p.g.rotation.y = Math.atan2(dx, dz); };
+  const place = (p, x, z, fx, fz) => { p.g.position.set(x, 0, z); face(p, fx - x, fz - z); };
+  const pose = (p, o = {}) => {
+    p.g.position.y = o.y || 0; p.hips.position.y = 0.86 + (o.crouch || 0) * -0.42;
+    p.legL.rotation.x = (o.crouch || 0) * -1.3 + (o.walk || 0); p.legR.rotation.x = (o.crouch || 0) * 0.5 - (o.walk || 0);
+    p.torso.rotation.x = (o.lean || 0);
+    p.armL.rotation.set(o.aL || 0, 0, o.zL || 0); p.armR.rotation.set(o.aR || 0, 0, o.zR || 0);
+  };
+  const walk = m => m > 0 && m < 1 ? Math.sin(m * Math.PI * 6) * 0.45 : 0;
+  const setCar = car => {
+    const ws = car && car.wheels; if (!ws || !ws.length) return;
+    let mx = 0, zf = -9, zr = 9;
+    for (const w of ws) { const q = w.pivot.position; mx = Math.max(mx, Math.abs(q.x)); zf = Math.max(zf, q.z); zr = Math.min(zr, q.z); }
+    wx = mx; af = zf; ar = zr; nose = af + 1.75; tail = ar - 0.95;
+  };
+  const anim = s => {
+    const t = performance.now() / 1000;
+    const ready = s < 0, st = ready ? 0 : Math.min(s, 1), after = Math.max(0, s - 1);
+    const gunOn1 = seg(st, 0.1, 0.16) * (1 - seg(st, 0.27, 0.31)), gunOn2 = seg(st, 0.62, 0.66) * (1 - seg(st, 0.76, 0.8));
+    const buzz = (gunOn1 > 0.9 && st < 0.27) || (gunOn2 > 0.9 && st < 0.76) ? Math.sin(t * 90) * 0.04 : 0;
+    const done = ready ? 0 : seg(st, 0.86, 1);
+    for (const w of wheels) {
+      const az = w.front ? af : ar, sx = w.sx, out = sx * (wx + 0.55), dz = w.front ? 1 : -1;
+      // wheel gun: kneels at the hub, gun on, off, on again, then stands back
+      const back = ease(done) * 0.9;
+      place(w.gunner, sx * (wx + 0.62 + back), az, 0, az);
+      pose(w.gunner, { crouch: 1 - ease(done), aR: -(gunOn1 + gunOn2 > 0 ? 1.45 : 0.6) * (1 - done) + buzz, aL: -1.1 * (1 - done), zR: 0, lean: 0.25 * (1 - done) });
+      w.gun.visible = true;
+      // tyre off: grabs the old tyre and carries it clear
+      const take = seg(st, 0.22, 0.27), carry = ease(seg(st, 0.28, 0.5));
+      const ox = lerp(lerp(out + sx * 0.25, sx * (wx + 0.25), take), sx * (wx + 2.3), carry), oz = lerp(az + dz * 0.85 * (1 - take), az + dz * 0.6, carry);
+      place(w.off, ox + sx * 0.45, oz, sx > 0 ? -50 : 50, oz);
+      pose(w.off, { aL: -1.25, aR: -1.25, lean: 0.35 * (take > 0 && carry < 1 ? 1 : 0.4), walk: walk(carry) });
+      w.oldTyre.visible = !ready && st >= 0.25;
+      if (st < 0.5) w.oldTyre.position.set(take < 1 ? sx * wx : ox, 0.36 + (take >= 1 ? 0.45 : 0), take < 1 ? az : oz), w.oldTyre.rotation.set(0, 0, 0);
+      else { w.oldTyre.position.set(sx * (wx + 2.3), 0.18, az + dz * 0.6); w.oldTyre.rotation.set(0, 0, Math.PI / 2); }
+      // tyre on: waits with the new tyre, fits it, steps back
+      const fit = ease(seg(st, 0.4, 0.62)), clear = ease(seg(st, 0.72, 0.86));
+      const nx2 = lerp(lerp(sx * (wx + 0.95), sx * (wx + 0.35), fit), sx * (wx + 1.6), clear), nz2 = lerp(lerp(az - dz * 0.95, az, fit), az - dz * 1.0, clear);
+      place(w.on, nx2 + sx * 0.4, nz2, sx > 0 ? -50 : 50, nz2);
+      pose(w.on, { aL: clear > 0 ? -0.2 : -1.25, aR: clear > 0 ? -0.2 : -1.25, lean: clear > 0 ? 0 : 0.3, walk: walk(fit) + walk(clear) });
+      w.newTyre.visible = st < 0.7;
+      w.newTyre.position.set(nx2, 0.36 + 0.45 * (1 - fit), nz2);
+    }
+    // front jack: waits in front of the nose, lifts at the start and lowers at the end
+    const lift = seg(st, 0.04, 0.1) * (1 - seg(st, 0.8, 0.86));
+    const fjBack = ready ? 0 : ease(seg(st, 0.86, 0.98)) * 1.4 + after * 3;
+    place(fj, fjBack > 0 ? ps * Math.min(fjBack, 2.4) : 0, nose + 1.2, 0, nose);
+    pose(fj, { aL: -0.9 - 0.4 * lift, aR: -0.9 - 0.4 * lift, lean: 0.2 + 0.25 * lift });
+    fBar.position.set(fj.g.position.x, 0.2 + 0.1 * lift, nose + 1.05); fBar.rotation.set(-0.35 + 0.2 * lift, Math.PI, 0); fBar.visible = fjBack < 0.6;
+    // rear jack: runs in from the side once the car has stopped
+    const rin = ready ? 0 : ease(seg(st, 0, 0.06)), rout = ease(seg(st, 0.86, 0.96));
+    const rjx = lerp(ps * 2.2, 0, rin * (1 - rout)), rjz = tail - 1.15;
+    place(rj, rjx, rjz, rjx, tail);
+    pose(rj, { aL: -0.9 - 0.4 * lift, aR: -0.9 - 0.4 * lift, lean: 0.2 + 0.25 * lift, walk: walk(rin) + walk(rout) });
+    rBar.position.set(rjx, 0.2 + 0.1 * lift, tail - 1.0); rBar.rotation.set(-0.35 + 0.2 * lift, 0, 0); rBar.visible = rin > 0.95 && rout < 0.05;
+    // stabilisers hold the sidepods
+    stabs.forEach((p, k) => { const sx = k ? -1 : 1, x = sx * (0.95 + (ready ? 0.6 : 0) + done * 0.6); place(p, x, (af + ar) / 2 - 0.2, 0, (af + ar) / 2 - 0.2); pose(p, { aL: ready ? -0.2 : -1.0, aR: ready ? -0.2 : -1.0, lean: ready ? 0 : 0.45, crouch: ready ? 0 : 0.35 }); });
+    // release: red board down during the stop, green raised to send the car
+    const go = !ready && st >= 0.9;
+    place(rel, ps * (wx + 1.4), nose + 0.3, 0, nose - 1);
+    pose(rel, { aR: go ? -2.9 : -1.45, aL: 0, lean: 0 });
+    signR.visible = !go; signG.visible = go;
+  };
+  anim(-1);
+  return { g, anim, setCar, lift: s => s < 0 ? 0 : 0.08 * seg(s, 0.04, 0.1) * (1 - seg(s, 0.8, 0.86)) };
+}
+

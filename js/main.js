@@ -1,11 +1,11 @@
 import * as THREE from 'three';
-import { W, KERB, DS, TRACKS, getTrack, previewPoints, locate, bankH } from './tracks.js?v=95100797';
-import { World } from './world.js?v=95100797';
-import { makeCar, disposeCar, setCompound, makeSafetyCar, loadCarModel, AXLE_F, AXLE_R } from './car.js?v=95100797';
-import { Sound } from './audio.js?v=95100797';
-import { Particles, Skids } from './fx.js?v=95100797';
-import { Weather } from './weather.js?v=95100797';
-import { clamp, angDiff, rng, fmt, store, setMaxAniso, smooth } from './util.js?v=95100797';
+import { W, KERB, DS, TRACKS, getTrack, previewPoints, locate, bankH } from './tracks.js?v=95101248';
+import { World } from './world.js?v=95101248';
+import { makeCar, disposeCar, setCompound, makeSafetyCar, loadCarModel, AXLE_F, AXLE_R } from './car.js?v=95101248';
+import { Sound } from './audio.js?v=95101248';
+import { Particles, Skids } from './fx.js?v=95101248';
+import { Weather } from './weather.js?v=95101248';
+import { clamp, angDiff, rng, fmt, store, setMaxAniso, smooth } from './util.js?v=95101248';
 
 const $ = id => document.getElementById(id);
 const VMAX = 100;
@@ -127,7 +127,7 @@ const isRace = () => game.session === 'race';
 const racing = () => isRace() && game.phase === 'race';
 const curLap = c => Math.max(1, c.maxDone + 1);
 
-function clearCars() { for (const c of game.cars) { scene.remove(c.group); disposeCar(c); } game.cars = []; game.player = null; game.mate = null; }
+function clearCars() { world.resetCrews(); for (const c of game.cars) { scene.remove(c.group); disposeCar(c); } game.cars = []; game.player = null; game.mate = null; }
 
 function resetState(c) {
   Object.assign(c, {
@@ -135,7 +135,7 @@ function resetState(c) {
     lapInvalid: false, lapTimes: [], finished: false, finishTime: 0, finishOrder: 0, splits: {}, lastBucket: -1e9, laneOff: 0, laneTarget: 0, blockT: 0, startDelay: 0,
     autopilot: false, inp: { throttle: 0, brake: 0, steer: 0 }, gear: 0, rpm: 4000, wheelRot: 0, hitT: 0, scrub: 0, sparkT: Math.random(),
     drsArmed: -1, drsOpen: false, drsGap: Infinity, offLimits: false, strikes: 0, penalty: 0, contactT: -9, pitReq: false, pit: null, pits: 0,
-    dmg: { fw: 0, rw: 0, susp: 0, punct: false, pull: 0 }, dnf: false, retire: null, yieldT: 0, active: true, sessBest: Infinity, timedLaps: 0, evalT: 0, wearWarn: 0, outLap: false, inPitRoad: false, impact: 0,
+    dmg: { fw: 0, rw: 0, susp: 0, punct: false, pull: 0 }, dnf: false, retire: null, yieldT: 0, active: true, sessBest: Infinity, timedLaps: 0, evalT: 0, wearWarn: 0, outLap: false, inPitRoad: false, impact: 0, pitExitT: -99, lift: 0,
   });
   c.fwing.visible = c.rwing.visible = true;
 }
@@ -223,6 +223,7 @@ function startWeekend() {
 function hideAllOverlays() { ['results', 'pause', 'qres', 'strategy'].forEach(id => $(id).classList.add('hidden')); }
 
 function startSession(kind) {
+  world.resetCrews();
   const Tr = game.T, p = game.player;
   hideAllOverlays();
   clearSC(); game.flag = null; $('flag').className = 'hidden';
@@ -355,7 +356,7 @@ function startRace() {
   clearSC(); game.flag = null; game.dnfTimes = []; game.redWx = false; game.drsHoldLap = 0; $('flag').className = 'hidden';
   game.drsCross = Tr.drs.map(() => ({})); game.to = { issued: null }; game.wx = { announced: 0, level: 0, raining: false, forecastSaid: false };
   for (const c of game.cars) { resetState(c); c.stints = []; c.active = true; c.group.visible = true; }
-  placeGrid(game.grid, Tr);
+  world.resetCrews(); placeGrid(game.grid, Tr);
   const pick = game.stratOpts[game.stratPick || 0];
   game.player.plan = pick.stints.map(s => s.slice());
   for (const c of game.cars) { if (!c.isPlayer) c.plan = aiPlan(c, game.laps); c.planIdx = 0; setTyres(c, c.plan[0][0]); }
@@ -587,24 +588,30 @@ function pitStep(c, dt, Tr) {
   if (p.stage === 'garage') { c.v = 0; pitPose(c, Tr); return; }
   if (p.stage === 'stop') {
     c.v = 0; p.wait -= dt;
+    const prog = clamp(1 - p.wait / p.total, 0, 1);
+    world.crewAnim(c.teamIdx, prog);
+    c.lift = 0.08 * clamp((prog - 0.04) / 0.06, 0, 1) * (1 - clamp((prog - 0.8) / 0.06, 0, 1));
     // wheels come off and go back on in the middle of the stop
     const tyresOff = p.wait < p.total * 0.75 && p.wait > p.total * 0.3;
     c.wheels.forEach(w => w.spin.visible = !tyresOff);
-    if (p.wait <= 0) { p.stage = 'out'; c.wheels.forEach(w => w.spin.visible = true); if (c.isPlayer) radio('Go, go, go!', 'good', 2); }
+    if (p.wait <= 0) { p.stage = 'out'; c.lift = 0; c.wheels.forEach(w => w.spin.visible = true); if (c.isPlayer) radio('Go, go, go!', 'good', 2); }
     pitPose(c, Tr); return;
   }
   let target = 22;
   if (p.stage === 'in' && p.stopAtBox) {
     const d = (kb - p.k) * DS; target = Math.min(22, Math.sqrt(Math.max(0, 2 * 9 * d)));
-    if (d <= 0.5) { p.stage = 'stop'; c.v = 0; serviceCar(c); p.total = p.wait; world.crewPose(c.teamIdx, true); pitPose(c, Tr); return; }
+    if (d < 90 && !p.crewReady) { p.crewReady = true; world.crewPose(c.teamIdx, true, c); }
+    if (d <= 0.5) { p.stage = 'stop'; c.v = 0; serviceCar(c); p.total = p.wait; if (!p.crewReady) { p.crewReady = true; world.crewPose(c.teamIdx, true, c); } world.crewAnim(c.teamIdx, 0); pitPose(c, Tr); return; }
   }
   if (p.stage === 'out' && !p.crewBack && p.k > kb + 10) { p.crewBack = true; world.crewPose(c.teamIdx, null); }
+  else if (p.stage === 'out' && !p.crewBack && p.crewReady) world.crewAnim(c.teamIdx, 1 + (p.k - kb) / 10);
+  else if (p.stage === 'in' && p.crewReady) world.crewAnim(c.teamIdx, -1);
   c.v = c.v > target ? Math.max(target, c.v - 28 * dt) : Math.min(target, c.v + 9 * dt);
   const dk = c.v * dt / DS; p.k += dk; c.prog += dk;
   if (p.k >= P.limOut) {
     // past the exit limiter line: hand control back to the driver on the pit-exit road
     if (!p.crewBack) world.crewPose(c.teamIdx, null);
-    pitPose(c, Tr); c.pit = null; c.inPitRoad = true; c.pitReq = false;
+    pitPose(c, Tr); c.pit = null; c.inPitRoad = true; c.pitReq = false; c.pitExitT = game.raceTime;
     c.laneOff = 0; c.laneTarget = 0;
     if (c.isPlayer) radio('Limiter off. Watch the white line on pit exit.', 'info', 3);
     return;
@@ -809,8 +816,18 @@ function contactFault(hitter, victim, cs) {
   if (cs >= 11) addPenalty(hitter, 5, 'causing a collision');
   else if (hitter.isPlayer) radio('Careful, that contact with ' + victim.code + ' is being looked at.', 'warn');
 }
+/* pit entry and exit roads count as track: no track-limit strikes on the pit side while using them */
+function onPitRoad(c, Tr) {
+  if (c.pit || c.inPitRoad) return true;
+  const P = Tr.pit, N = Tr.N;
+  if (c.lat * P.side <= 0) return false;
+  const kk = (c.idx - P.entry + N) % N, before = (P.entry - c.idx + N) % N;
+  if (kk < P.limIn + 20 || (kk > P.limOut - 20 && kk < P.len)) return true;    // entry and exit roads
+  if (before <= 40 && c.pitReq) return true;                                     // diving across to the pit entry
+  const dt0 = game.raceTime - (c.pitExitT ?? -99); return dt0 >= 0 && dt0 < 5;                               // rejoining after the pit exit
+}
 function trackLimits(c) {
-  const out = Math.abs(c.lat) > W + KERB + 0.9 && !c.pit && !c.dnf;
+  const out = Math.abs(c.lat) > W + KERB + 0.9 && !c.dnf && !onPitRoad(c, game.T);
   if (out && !c.offLimits && Math.abs(c.v) > 12) {
     if (c.isPlayer && !c.lapInvalid && !isRace() && game.session !== 'tt' && c.maxDone >= 0) radio('Lap deleted for track limits.', 'bad', 3);
     if (c.isPlayer) c.lapInvalid = true;
@@ -1226,7 +1243,7 @@ function updateCarVisuals(dt) {
     c.roll = (c.roll || 0) + (tgtRoll - (c.roll || 0)) * Math.min(1, dt * 6); c.group.rotation.z = c.roll;
     const Tb = game.T, bh = bankH(Tb, c.idx, c.lat), inBank = Math.abs(c.lat) < W + KERB + 2 ? Math.atan(Tb.bank[c.idx]) : 0;
     c.group.rotation.z += inBank;
-    c.group.position.y = bh + ((c.surf === 1 && Math.abs(c.v) > 10) ? Math.sin(performance.now() * 0.08 + c.x) * 0.012 : (c.dmg.punct ? -0.05 : 0));
+    c.group.position.y = bh + (c.lift || 0) + ((c.surf === 1 && Math.abs(c.v) > 10) ? Math.sin(performance.now() * 0.08 + c.x) * 0.012 : (c.dmg.punct ? -0.05 : 0));
     const sp = Math.abs(c.v);
     if (c.v < -0.5) { c.gear = -1; c.rpm = 4500 + sp * 400; }
     else {
@@ -1622,7 +1639,7 @@ function updateSound(dt) {
   sound.update(dt, { on: true, rpm: p.rpm, throttle: game.phase === 'lights' ? (keys.w ? 1 : 0) : p.inp.throttle, gear: p.gear, speed: Math.abs(p.v), kerb: p.surf === 1, slide: Math.max(Math.abs(p.slip) * 2.5, lock ? 0.6 : 0, p.scrub > 0.9 ? 0.4 : 0) * (weather.N && weather.wetAt(p.idx) > 0.3 ? 0.2 : 1), rain: weather.N ? weather.rainAt(p.idx) : 0, impact: p.impact || 0, rival });
   p.impact = 0;
 }
-await loadCarModel('js/car.bin?v=95100797');
+await loadCarModel('js/car.bin?v=95101248');
 initMenu();
 requestAnimationFrame(frame);
 
