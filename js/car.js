@@ -234,15 +234,21 @@ function makeExtCar(g, fwing, rwing, mats, compound) {
   const add = (name, mat, parent) => { if (P[name]) parent.add(new THREE.Mesh(P[name].geo, mat)); };
   add('body', mats.body, g); add('acc', mats.acc, g); add('carbon', CARBON, g);
   add('fw_acc', mats.acc, fwing); add('fw_carbon', CARBON, fwing); add('rw_acc', mats.acc, rwing);
+  // clean halo (the model's own one was lumpy): a titanium tube round the cockpit plus the centre pillar
+  g.add(new THREE.Mesh(EXT_HALO, HALO_MAT), new THREE.Mesh(EXT_PILLAR, HALO_MAT));
+  for (const sx of [1, -1]) { const foot = new THREE.Mesh(EXT_FOOT, HALO_MAT); foot.position.set(sx * 0.33, 0.79, 0.13); g.add(foot); }
+  // clean 18" wheels built to the model's measured hubs and radius
+  const W = extWheels(R), hx = EXT.meta.hubX || { f: 1.02, r: 1.06 };
   const wheels = [], stripes = [];
-  for (const key of ['wFL', 'wFR', 'wRL', 'wRR']) {
-    const w = P[key]; if (!w) continue;
-    const pivot = new THREE.Group(); pivot.position.set(...w.hub); g.add(pivot);
+  for (const [front, sx] of [[true, 1], [true, -1], [false, 1], [false, -1]]) {
+    const geo = front ? W.front : W.rear;
+    const pivot = new THREE.Group(); pivot.position.set(sx * ((front ? hx.f : hx.r) - geo.w / 2), R, front ? EXT.meta.axleF : EXT.meta.axleR); g.add(pivot);
     const spin = new THREE.Group(); pivot.add(spin);
-    spin.add(new THREE.Mesh(w.geo, EXT_TYRE));
-    // compound stripe on the outer sidewall
-    const sx = Math.sign(w.hub[0]), st = new THREE.Mesh(EXT_STRIPE, M.wheelMats[compound]); st.position.x = sx * (key[1] === 'F' ? 0.15 : 0.2); spin.add(st); stripes.push(st);
-    wheels.push({ pivot, spin, front: key[1] === 'F' });
+    spin.add(new THREE.Mesh(geo.tyre, M.wheelMats.tyre), new THREE.Mesh(geo.rim, M.wheelMats.rim));
+    const face = new THREE.Mesh(geo.face, M.wheelMats.face); face.position.x = sx * (geo.w / 2 - 0.004); face.rotation.y = sx * Math.PI / 2; spin.add(face);
+    const inner = new THREE.Mesh(geo.face, M.wheelMats.face); inner.position.x = -sx * (geo.w / 2 - 0.004); inner.rotation.y = -sx * Math.PI / 2; spin.add(inner);
+    for (const s2 of [1, -1]) { const st = new THREE.Mesh(geo.stripe, M.wheelMats[compound]); st.position.x = s2 * (geo.w / 2 + 0.002); spin.add(st); stripes.push(st); }
+    wheels.push({ pivot, spin, front });
   }
   const steering = new THREE.Group(); steering.position.set(0, 0.62, 0.55); steering.rotation.x = -0.55; g.add(steering);
   steering.add(new THREE.Mesh(SW, DARK));
@@ -252,8 +258,24 @@ function makeExtCar(g, fwing, rwing, mats, compound) {
   const numTex = new THREE.Texture();
   return { group: g, wheels, helmet: new THREE.Group(), steering, cockpitHide: [], mats, numTex, stripes, fwing, rwing };
 }
-const EXT_TYRE = new THREE.MeshStandardMaterial({ color: 0x1b1c1f, roughness: 0.75, metalness: 0.15 });
-const EXT_STRIPE = new THREE.TorusGeometry(0.31, 0.008, 4, 40).rotateY(Math.PI / 2);
+const HALO_MAT = new THREE.MeshStandardMaterial({ color: 0x1c1d21, roughness: 0.35, metalness: 0.6 });
+const EXT_HALO = new THREE.TubeGeometry(new THREE.CatmullRomCurve3([[0.33, 0.79, 0.13], [0.335, 0.88, 0.3], [0.27, 0.935, 0.6], [0, 0.95, 0.8], [-0.27, 0.935, 0.6], [-0.335, 0.88, 0.3], [-0.33, 0.79, 0.13]].map(p => new THREE.Vector3(...p))), 64, 0.03, 12);
+const EXT_PILLAR = new THREE.TubeGeometry(new THREE.CatmullRomCurve3([new THREE.Vector3(0, 0.95, 0.8), new THREE.Vector3(0, 0.9, 0.9), new THREE.Vector3(0, 0.79, 1.02)]), 16, 0.034, 12);
+const EXT_FOOT = new THREE.CylinderGeometry(0.035, 0.05, 0.08, 12);
+let EXT_WHEELS = null;
+function extWheels(R) {
+  if (EXT_WHEELS) return EXT_WHEELS;
+  // low-profile 18" tyre: rounded shoulders, flat tread, rim + wheel cover
+  const prof = (w, rim) => [[rim, -w / 2], [R - 0.045, -w / 2 - 0.004], [R - 0.012, -w / 2 + 0.022], [R, -w / 2 + 0.055], [R, w / 2 - 0.055], [R - 0.012, w / 2 - 0.022], [R - 0.045, w / 2 + 0.004], [rim, w / 2]].map(p => new THREE.Vector2(p[0], p[1]));
+  const mk = w => ({
+    tyre: new THREE.LatheGeometry(prof(w, 0.24), 48).rotateZ(Math.PI / 2),
+    rim: new THREE.CylinderGeometry(0.245, 0.245, w - 0.01, 32, 1, true).rotateZ(Math.PI / 2),
+    face: new THREE.CircleGeometry(0.245, 32),
+    stripe: new THREE.TorusGeometry(R - 0.06, 0.008, 4, 48).rotateY(Math.PI / 2),
+    w,
+  });
+  return (EXT_WHEELS = { front: mk(0.32), rear: mk(0.4) });
+}
 
 export function setCompound(c, comp) { const m = MODEL.wheelMats[comp] || MODEL.wheelMats.medium; c.stripes.forEach(s => s.material = m); }
 export function disposeCar(c) { c.mats.body.dispose(); c.mats.acc.dispose(); c.numTex.dispose(); }
