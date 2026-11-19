@@ -1,11 +1,11 @@
 import * as THREE from 'three';
-import { W, KERB, DS, TRACKS, getTrack, previewPoints, locate, bankH } from './tracks.js?v=95101248';
-import { World } from './world.js?v=95101248';
-import { makeCar, disposeCar, setCompound, makeSafetyCar, loadCarModel, AXLE_F, AXLE_R } from './car.js?v=95101248';
-import { Sound } from './audio.js?v=95101248';
-import { Particles, Skids } from './fx.js?v=95101248';
-import { Weather } from './weather.js?v=95101248';
-import { clamp, angDiff, rng, fmt, store, setMaxAniso, smooth } from './util.js?v=95101248';
+import { W, KERB, DS, TRACKS, getTrack, previewPoints, locate, bankH } from './tracks.js?v=95102160';
+import { World } from './world.js?v=95102160';
+import { makeCar, disposeCar, setCompound, makeSafetyCar, loadCarModel, AXLE_F, AXLE_R } from './car.js?v=95102160';
+import { Sound } from './audio.js?v=95102160';
+import { Particles, Skids } from './fx.js?v=95102160';
+import { Weather } from './weather.js?v=95102160';
+import { clamp, angDiff, rng, fmt, store, setMaxAniso, smooth } from './util.js?v=95102160';
 
 const $ = id => document.getElementById(id);
 const VMAX = 100;
@@ -1639,7 +1639,7 @@ function updateSound(dt) {
   sound.update(dt, { on: true, rpm: p.rpm, throttle: game.phase === 'lights' ? (keys.w ? 1 : 0) : p.inp.throttle, gear: p.gear, speed: Math.abs(p.v), kerb: p.surf === 1, slide: Math.max(Math.abs(p.slip) * 2.5, lock ? 0.6 : 0, p.scrub > 0.9 ? 0.4 : 0) * (weather.N && weather.wetAt(p.idx) > 0.3 ? 0.2 : 1), rain: weather.N ? weather.rainAt(p.idx) : 0, impact: p.impact || 0, rival });
   p.impact = 0;
 }
-await loadCarModel('js/car.bin?v=95101248');
+await loadCarModel('js/car.bin?v=95102160');
 initMenu();
 requestAnimationFrame(frame);
 

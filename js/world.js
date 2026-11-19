@@ -1,8 +1,8 @@
 import * as THREE from 'three';
 import { Sky } from 'three/addons/objects/Sky.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { W, KERB, DS, bankH } from './tracks.js?v=95101248';
-import { rng, makeNoise, canvasTex, normalTex, noiseFill, smooth, clamp } from './util.js?v=95101248';
+import { W, KERB, DS, bankH } from './tracks.js?v=95102160';
+import { rng, makeNoise, canvasTex, normalTex, noiseFill, smooth, clamp } from './util.js?v=95102160';
 
 const TMP_GREY = new THREE.Color('#8b939c');
 const AD_WORDS = ['APEX GP', 'NOVA FUEL', 'KITE TYRES', 'ORBITAL', 'HELIX', 'SUMMIT', 'VOLTA', 'RAPIDE', 'ZENITH', 'TORQUE+'];
@@ -15,7 +15,7 @@ function textures() {
   TX = {};
   TX.asphalt = canvasTex(512, 512, (g, w, h) => noiseFill(g, w, h, '#4a4c51', 30, 3, 0.05));
   TX.asphaltN = normalTex(512, 512, (g, w, h) => noiseFill(g, w, h, '#808080', 90, 4, 0.08), 2.2);
-  TX.kerb = canvasTex(64, 128, (g, w, h) => { g.fillStyle = '#c8202a'; g.fillRect(0, 0, w, h / 2); g.fillStyle = '#f1f1f1'; g.fillRect(0, h / 2, w, h / 2); const id = g.getImageData(0, 0, w, h); for (let i = 0; i < id.data.length; i += 4) { const n = (r() - 0.5) * 18; id.data[i] += n; id.data[i + 1] += n; id.data[i + 2] += n; } g.putImageData(id, 0, 0); });
+  TX.kerbFor = (a, b) => TX['kerb' + a + b] || (TX['kerb' + a + b] = canvasTex(64, 128, (g, w, h) => { g.fillStyle = a; g.fillRect(0, 0, w, h / 2); g.fillStyle = b; g.fillRect(0, h / 2, w, h / 2); const id = g.getImageData(0, 0, w, h); for (let i = 0; i < id.data.length; i += 4) { const n = (r() - 0.5) * 18; id.data[i] += n; id.data[i + 1] += n; id.data[i + 2] += n; } g.putImageData(id, 0, 0); }));
   TX.paint = canvasTex(128, 128, (g, w, h) => noiseFill(g, w, h, '#e8e8e8', 22, 8));
   TX.gravel = canvasTex(256, 256, (g, w, h) => noiseFill(g, w, h, '#c9b48a', 60, 9, 0.25));
   TX.gravelN = normalTex(256, 256, (g, w, h) => noiseFill(g, w, h, '#808080', 140, 10, 0.3), 3);
@@ -228,7 +228,7 @@ export class World {
       : new THREE.MeshStandardMaterial({ map: tx.verge, color: th.grass, roughness: 1 });
     for (const s of [1, -1]) add(ribbon(T, 0, N, [col(s * W, 0.01, 0), i => [s * (sideLim(T, s)(i) + 0.3), 0.01, 1]], T.street ? 6 : 16), vergeMat);
     // kerbs
-    const kerbMat = new THREE.MeshStandardMaterial({ map: tx.kerb, roughness: 0.55 });
+    const kerbMat = new THREE.MeshStandardMaterial({ map: tx.kerbFor(...(T.def.kerb || ['#c8202a', '#f1f1f1'])), roughness: 0.55 });
     const apronMat = new THREE.MeshStandardMaterial({ map: tx.paint, color: th.apron, roughness: 0.7 });
     for (const [s0, e0] of T.kerbs) {
       const cnt = e0 - s0;
