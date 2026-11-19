@@ -1,11 +1,11 @@
 import * as THREE from 'three';
-import { W, KERB, DS, TRACKS, getTrack, previewPoints, locate, bankH } from './tracks.js?v=73379208';
-import { World } from './world.js?v=73379208';
-import { makeCar, disposeCar, setCompound, makeSafetyCar, loadCarModel, AXLE_F, AXLE_R } from './car.js?v=73379208';
-import { Sound } from './audio.js?v=73379208';
-import { Particles, Skids } from './fx.js?v=73379208';
-import { Weather } from './weather.js?v=73379208';
-import { clamp, angDiff, rng, fmt, store, setMaxAniso, smooth } from './util.js?v=73379208';
+import { W, KERB, DS, TRACKS, getTrack, previewPoints, locate, bankH } from './tracks.js?v=73729377';
+import { World } from './world.js?v=73729377';
+import { makeCar, disposeCar, setCompound, makeSafetyCar, loadCarModel, AXLE_F, AXLE_R } from './car.js?v=73729377';
+import { Sound } from './audio.js?v=73729377';
+import { Particles, Skids } from './fx.js?v=73729377';
+import { Weather } from './weather.js?v=73729377';
+import { clamp, angDiff, rng, fmt, store, setMaxAniso, smooth } from './util.js?v=73729377';
 
 const $ = id => document.getElementById(id);
 const VMAX = 100;
@@ -33,7 +33,16 @@ const DRIVERS = [
   ['Tom Ashworth', 'ASH'], ['Kenji Arai', 'ARA'],
 ];
 const CAR_NUMS = [4, 7, 11, 14, 16, 22, 27, 31, 33, 44, 55, 63, 77, 81, 88, 99, 3, 5, 10, 12, 18, 23];
-const teamIdxOf = di => Math.floor(di / 2) % TEAMS.length;
+let TEAM_MAP = DRIVERS.map((_, i) => Math.floor(i / 2) % TEAMS.length);
+const teamIdxOf = di => TEAM_MAP[di];
+/* random pairings: shuffle the drivers, then seat them two to a team */
+function shuffleTeams(r, seated) {
+  // seat the drivers actually racing (minus the player's teammate) two per team, so every team is a pair
+  const pool = (seated || DRIVERS.map((_, i) => i)).slice().sort(() => r() - 0.5), map = DRIVERS.map((_, i) => Math.floor(i / 2) % TEAMS.length);
+  const slots = TEAMS.map((_, t) => t).sort(() => r() - 0.5);
+  pool.forEach((di, k) => { map[di] = slots[Math.floor(k / 2) % slots.length]; });
+  return map;
+}
 const LIVERIES = ['#ffcc00', '#f8fafc', '#ef4444', '#3b82f6', '#10b981', '#a855f7', '#111827'];
 const POINTS = [25, 18, 15, 12, 10, 8, 6, 4, 2, 1];
 // 100 = right on the limit and slightly over it (they rely on kerbs and run-off); 75 ≈ old Hard
@@ -102,6 +111,7 @@ function newSeason() {
   const r = rng(Date.now() & 0xfffff);
   const order = DRIVERS.map((d, i) => i).sort(() => r() - 0.5).slice(0, settings.opp);
   const s = { round: 0, laps: settings.laps, ai: settings.ai, opp: settings.opp, lineup: order.map(di => ({ di, rating: 0.99 + r() * 0.02 })), pts: {}, finished: false };
+  s.teamMap = shuffleTeams(r, s.lineup.slice(1).map(l => l.di));
   s.pts.YOU = 0; order.forEach(di => s.pts[DRIVERS[di][1]] = 0);
   saveSeason(s); return s;
 }
@@ -184,8 +194,10 @@ function startWeekend() {
   game.skill = champ ? (game.season.ai ?? 50) : settings.ai;
   const r = rng((Date.now() & 0xffff) + 1);
   let lineup = [];
+  if (champ) { if (!game.season.teamMap) { game.season.teamMap = shuffleTeams(r, game.season.lineup.slice(1).map(l => l.di)); saveSeason(game.season); } TEAM_MAP = game.season.teamMap; }
   if (champ) lineup = game.season.lineup.slice();
   else if (!tt) lineup = DRIVERS.map((d, i) => i).sort(() => r() - 0.5).slice(0, settings.opp).map(di => ({ di, rating: 0.99 + r() * 0.02 }));
+  if (!champ && !tt) TEAM_MAP = shuffleTeams(r, lineup.slice(1).map(l => l.di));
   makeField(lineup, game.skill);
   game.seed = (Date.now() & 0xfffff) + 3;
   game.lapEst = estimateLap(Tr, aiPace(game.skill), Tr.vprof);
@@ -1610,7 +1622,7 @@ function updateSound(dt) {
   sound.update(dt, { on: true, rpm: p.rpm, throttle: game.phase === 'lights' ? (keys.w ? 1 : 0) : p.inp.throttle, gear: p.gear, speed: Math.abs(p.v), kerb: p.surf === 1, slide: Math.max(Math.abs(p.slip) * 2.5, lock ? 0.6 : 0, p.scrub > 0.9 ? 0.4 : 0) * (weather.N && weather.wetAt(p.idx) > 0.3 ? 0.2 : 1), rain: weather.N ? weather.rainAt(p.idx) : 0, impact: p.impact || 0, rival });
   p.impact = 0;
 }
-await loadCarModel('js/car.bin?v=73379208');
+await loadCarModel('js/car.bin?v=73729377');
 initMenu();
 requestAnimationFrame(frame);
 
