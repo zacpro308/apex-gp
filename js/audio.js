@@ -53,7 +53,27 @@ export class Sound {
     o1.connect(g1); o2.connect(g2); g1.connect(hp); g2.connect(hp);
     hp.connect(pres); pres.connect(shaper); shaper.connect(lp); lp.connect(out); out.connect(this.master);
     o1.start(); o2.start();
-    return { o1, o2, f1: pres, f2: lp, out, level, srpm: 7000 };
+    // "scream" layer: the firing frequency and its 2nd/3rd orders through a bright resonant band.
+    // This is what makes a high-revving V8 sound like a V8 rather than a hum.
+    const sc = ctx.createOscillator(); sc.type = 'sawtooth';
+    const sc2 = ctx.createOscillator(); sc2.type = 'sawtooth';
+    const scBand = ctx.createBiquadFilter(); scBand.type = 'bandpass'; scBand.frequency.value = 3000; scBand.Q.value = 1.6;
+    const scG = ctx.createGain(); scG.gain.value = 0;
+    const sc2G = ctx.createGain(); sc2G.gain.value = 0.5;
+    sc.connect(scBand); sc2.connect(sc2G); sc2G.connect(scBand); scBand.connect(scG); scG.connect(out);
+    sc.start(); sc2.start();
+    // exhaust rasp: noise chopped at the firing frequency (each combustion pulse is a burst of noise)
+    const nz = ctx.createBufferSource(); nz.buffer = this.noiseBuf; nz.loop = true;
+    const nzBand = ctx.createBiquadFilter(); nzBand.type = 'bandpass'; nzBand.frequency.value = 1800; nzBand.Q.value = 0.8;
+    const chop = ctx.createGain(); chop.gain.value = 0;
+    const pulse = ctx.createOscillator(); pulse.type = 'square';
+    const pulseDepth = ctx.createGain(); pulseDepth.gain.value = 0.5;
+    const pulseBias = ctx.createConstantSource(); pulseBias.offset.value = 0.5;
+    pulse.connect(pulseDepth); pulseDepth.connect(chop.gain); pulseBias.connect(chop.gain);
+    const rasp = ctx.createGain(); rasp.gain.value = 0;
+    nz.connect(nzBand); nzBand.connect(chop); chop.connect(rasp); rasp.connect(out);
+    nz.start(); pulse.start(); pulseBias.start();
+    return { o1, o2, f1: pres, f2: lp, out, level, srpm: 7000, sc, sc2, scBand, scG, pulse, rasp, nzBand };
   }
   setEngine(e, rpm, thr, gain) {
     // the game's rev range (4k-12.5k) is mapped onto a real high-revving V8 range (7k-18k)
@@ -63,7 +83,15 @@ export class Sound {
     e.o1.frequency.setTargetAtTime(base, t, 0.015); e.o2.frequency.setTargetAtTime(base * 1.0035, t, 0.015);
     e.f1.frequency.setTargetAtTime(1600 + e.srpm * 0.08, t, 0.05);
     e.f2.frequency.setTargetAtTime(2500 + thr * 4500 + e.srpm * 0.15, t, 0.05);
-    e.out.gain.setTargetAtTime(this.muted ? 0 : gain * e.level * (0.045 + 0.09 * thr), t, 0.04);
+    // scream gets stronger with revs and throttle; rasp is strongest on throttle
+    const hi = Math.min(1, Math.max(0, (e.srpm - 9000) / 9000));
+    e.sc.frequency.setTargetAtTime(fire, t, 0.015); e.sc2.frequency.setTargetAtTime(fire * 1.5, t, 0.015);
+    e.scBand.frequency.setTargetAtTime(1800 + e.srpm * 0.18, t, 0.05);
+    e.scG.gain.setTargetAtTime(0.25 + 0.75 * hi * (0.4 + 0.6 * thr), t, 0.04);
+    e.pulse.frequency.setTargetAtTime(fire, t, 0.015);
+    e.nzBand.frequency.setTargetAtTime(1200 + e.srpm * 0.08, t, 0.05);
+    e.rasp.gain.setTargetAtTime(0.15 + 0.45 * thr, t, 0.04);
+    e.out.gain.setTargetAtTime(this.muted ? 0 : gain * e.level * (0.07 + 0.13 * thr), t, 0.04);
   }
   burst(gain, dur, freq = 1500, q = 1) {
     if (!this.ctx || this.muted) return;

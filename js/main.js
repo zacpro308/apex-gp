@@ -1,11 +1,11 @@
 import * as THREE from 'three';
-import { W, KERB, DS, TRACKS, getTrack, previewPoints, locate, bankH } from './tracks.js?v=73168912';
-import { World } from './world.js?v=73168912';
-import { makeCar, disposeCar, setCompound, makeSafetyCar, loadCarModel, AXLE_F, AXLE_R } from './car.js?v=73168912';
-import { Sound } from './audio.js?v=73168912';
-import { Particles, Skids } from './fx.js?v=73168912';
-import { Weather } from './weather.js?v=73168912';
-import { clamp, angDiff, rng, fmt, store, setMaxAniso, smooth } from './util.js?v=73168912';
+import { W, KERB, DS, TRACKS, getTrack, previewPoints, locate, bankH } from './tracks.js?v=73379208';
+import { World } from './world.js?v=73379208';
+import { makeCar, disposeCar, setCompound, makeSafetyCar, loadCarModel, AXLE_F, AXLE_R } from './car.js?v=73379208';
+import { Sound } from './audio.js?v=73379208';
+import { Particles, Skids } from './fx.js?v=73379208';
+import { Weather } from './weather.js?v=73379208';
+import { clamp, angDiff, rng, fmt, store, setMaxAniso, smooth } from './util.js?v=73379208';
 
 const $ = id => document.getElementById(id);
 const VMAX = 100;
@@ -466,7 +466,7 @@ function dynStep(c, inp, dt, grip, vm, bankA, st, surf, d) {
   if (u < 6) {
     // walking pace and reverse: simple, stable kinematic steering
     if (inp.throttle > 0) u += (u < -0.2 ? 28 : 9 * Math.min(1, 0.45 + 0.6 * grip)) * inp.throttle * dt;
-    if (inp.brake > 0) { if (u > 0.4) u = Math.max(0, u - 30 * grip * inp.brake * dt); else if (inp.throttle === 0) u = Math.max(u - 7 * dt, -12); }
+    if (inp.brake > 0) { if (u > 0.4) u = Math.max(0, u - 36 * grip * inp.brake * dt); else if (inp.throttle === 0) u = Math.max(u - 7 * dt, -12); }
     const dec = (0.3 + (inp.throttle === 0 ? 1.2 : 0) + DRAG[surf] * Math.abs(u)) * dt;
     if (u > 0) u = Math.max(0, u - dec); else if (u < 0) u = Math.min(0, u + dec);
     vl *= Math.exp(-10 * dt);
@@ -483,14 +483,14 @@ function dynStep(c, inp, dt, grip, vm, bankA, st, surf, d) {
       const brake = inp.brake > 0 ? 36 * grip * inp.brake : 0;
       const drag = 0.3 + dragK(c) * u * u + (inp.throttle === 0 ? 1.2 : 0) + DRAG[surf] * u + (d.punct ? 0.05 * u : 0);
       // longitudinal weight transfer: braking loads the front, acceleration loads the rear
-      const dN = clamp((drive - brake - drag) * P.h / P.L, -4, 4);
+      const dN = clamp((drive - drag) * P.h / P.L, -4, 4);
       const Nf = Math.max(0.5, Ntot * 0.45 - dN), Nr = Math.max(0.5, Ntot * 0.55 + dN);
       // speed-sensitive steering: plenty of lock in slow corners, much less at high speed
       // (full lock at speed is just under the angle for peak front grip, so it can't snap)
       const delta = st * clamp(0.045 + 0.97 * P.L * mu * Ntot / (u * u), 0.045, 0.38);
       const muR = mu * P.rearGrip, xF = P.muX * mu * Nf, xR = P.muX * muR * Nr;
       // braking/driving use up some cornering grip (friction ellipse), never all of it
-      const useF = Math.min(0.85, brake * P.brakeF / xF), useR = Math.min(0.85, Math.abs(drive - brake * (1 - P.brakeF)) / xR);
+      const useF = 0, useR = Math.min(0.85, drive / xR);
       const capF = mu * Nf * Math.sqrt(1 - useF * useF), capR = muR * Nr * Math.sqrt(1 - useR * useR);
       const af = Math.atan2(vl + P.a * r, u) - delta, ar = Math.atan2(vl - P.b * r, u);
       const Fyf = -capF * tyreCurve(af), Fyr = -capR * tyreCurve(ar);
@@ -1610,7 +1610,7 @@ function updateSound(dt) {
   sound.update(dt, { on: true, rpm: p.rpm, throttle: game.phase === 'lights' ? (keys.w ? 1 : 0) : p.inp.throttle, gear: p.gear, speed: Math.abs(p.v), kerb: p.surf === 1, slide: Math.max(Math.abs(p.slip) * 2.5, lock ? 0.6 : 0, p.scrub > 0.9 ? 0.4 : 0) * (weather.N && weather.wetAt(p.idx) > 0.3 ? 0.2 : 1), rain: weather.N ? weather.rainAt(p.idx) : 0, impact: p.impact || 0, rival });
   p.impact = 0;
 }
-await loadCarModel('js/car.bin?v=73168912');
+await loadCarModel('js/car.bin?v=73379208');
 initMenu();
 requestAnimationFrame(frame);
 
