@@ -1,11 +1,11 @@
 import * as THREE from 'three';
-import { W, KERB, DS, TRACKS, getTrack, previewPoints, locate, bankH } from './tracks.js?v=72136907';
-import { World } from './world.js?v=72136907';
-import { makeCar, disposeCar, setCompound, makeSafetyCar, loadCarModel, AXLE_F, AXLE_R } from './car.js?v=72136907';
-import { Sound } from './audio.js?v=72136907';
-import { Particles, Skids } from './fx.js?v=72136907';
-import { Weather } from './weather.js?v=72136907';
-import { clamp, angDiff, rng, fmt, store, setMaxAniso, smooth } from './util.js?v=72136907';
+import { W, KERB, DS, TRACKS, getTrack, previewPoints, locate, bankH } from './tracks.js?v=72605544';
+import { World } from './world.js?v=72605544';
+import { makeCar, disposeCar, setCompound, makeSafetyCar, loadCarModel, AXLE_F, AXLE_R } from './car.js?v=72605544';
+import { Sound } from './audio.js?v=72605544';
+import { Particles, Skids } from './fx.js?v=72605544';
+import { Weather } from './weather.js?v=72605544';
+import { clamp, angDiff, rng, fmt, store, setMaxAniso, smooth } from './util.js?v=72605544';
 
 const $ = id => document.getElementById(id);
 const VMAX = 100;
@@ -389,6 +389,14 @@ function stepCar(c, inp, dt, Tr) {
   c.gripTD = tg * dmgF;
   let v = c.v;
   const vm = (c.drsOpen ? VMAX * 1.03 : VMAX) * (1 - 0.05 * d.rw) * (d.punct ? 0.35 : 1) * Math.sqrt(boost);
+  let yaw, slip;
+  if ((c.isPlayer && !c.autopilot) || c.dynamic) {
+    // the player's car uses a proper chassis/tyre model
+    const st = clamp(inp.steer + d.pull, -1, 1);
+    const bankA = Tr.bankSin[c.idx] * 9.81 * 1.6 * (st * Tr.curv[c.idx] > 0 ? 1 : -0.3);
+    yaw = dynStep(c, inp, dt, grip, vm, bankA, st, surf, d);
+    slip = c.slip; v = c.v;
+  } else {
   if (inp.throttle > 0) {
     if (v < -0.2) v += 28 * dt * inp.throttle;
     else { const f = 1 - Math.pow(Math.max(v, 0) / vm, 2); v += 11.5 * boost * inp.throttle * Math.max(f, 0) * (surf >= 3 ? 0.55 : 1) * Math.min(1, 0.45 + 0.6 * grip) * dt; }
@@ -403,7 +411,7 @@ function stepCar(c, inp, dt, Tr) {
   const st = clamp(inp.steer + d.pull, -1, 1);
   const bankA = Tr.bankSin[c.idx] * 9.81 * 1.6 * (st * Tr.curv[c.idx] > 0 ? 1 : -0.3);
   const sp = Math.abs(v), geo = sp * Math.tan(0.42) / 3.6, dyn = ((18 + 0.25 * sp) * grip + bankA) / Math.max(sp, 1);
-  const yaw = st * Math.min(geo, dyn) * (v < 0 ? -1 : 1);
+  yaw = st * Math.min(geo, dyn) * (v < 0 ? -1 : 1);
   // throttle-on oversteer when grip is low (wet, worn tyres, rear wing damage)
   const loose = Math.max(0, 0.84 - grip + 0.15 * d.rw) * inp.throttle * Math.min(1, sp / 30);
   c.h += (yaw + st * loose * 0.9 + c.spin) * dt;
@@ -413,9 +421,11 @@ function stepCar(c, inp, dt, Tr) {
   // the direction of travel lags the nose when grip is low: the car slides
   const relax = clamp(16 * grip * grip - 4 * d.rw, 1.4, 16);
   c.vh += angDiff(c.h, c.vh) * Math.min(1, relax * dt);
-  const slip = c.slip = angDiff(c.h, c.vh);
+  slip = c.slip = angDiff(c.h, c.vh);
   if (Math.abs(slip) > 0.12 && sp > 2) v -= Math.sign(v) * Math.min(sp, Math.abs(slip) * 7 * dt * (1 + sp / 40));
   c.x += Math.sin(c.vh) * v * dt; c.z += Math.cos(c.vh) * v * dt; c.v = v;
+  }
+  const sp = Math.abs(v);
 
   // tyre wear: faster when cornering hard, much faster for wet-weather tyres on a dry track
   const lapsLife = isRace() ? Math.max(2, COMP[c.tyre.comp].life * game.laps) : COMP[c.tyre.comp].life * 20;
@@ -438,6 +448,69 @@ function stepCar(c, inp, dt, Tr) {
     else if (!gap && c.inPitRoad) wallHit(c, Tr, ni, -s, -(P.wall + 1.65));
   } else if (Math.abs(c.lat) > lim) wallHit(c, Tr, ni, s, lim);
 }
+/* ---- Player chassis model ----
+   Bicycle model with Pacejka-style tyres: separate front/rear slip angles, a friction circle per axle
+   (braking or driving uses up cornering grip), lock-ups, longitudinal weight transfer (trail-braking
+   rotation, power oversteer), yaw inertia, and speed-dependent grip from downforce. The total grip
+   envelope matches the AI's (18 + 0.25 v) m/s², so racing stays fair. Forces are per unit mass. */
+// rearGrip > 1 gives the slight stability bias real cars run; muX = tyres grip harder in a straight line than sideways
+const DYN = { L: 3.6, a: 1.98, b: 1.62, h: 0.3, k2: 1.6, B: 16.7, C: 1.6, brakeF: 0.6, rearGrip: 1.2, muX: 1.35 };
+const tyreCurve = a => Math.sin(DYN.C * Math.atan(DYN.B * a));
+function dynStep(c, inp, dt, grip, vm, bankA, st, surf, d) {
+  const P = DYN, sh0 = Math.sin(c.h), ch0 = Math.cos(c.h);
+  const vx0 = c.v * Math.sin(c.vh), vz0 = c.v * Math.cos(c.vh);
+  let u = vx0 * sh0 + vz0 * ch0, vl = vx0 * ch0 - vz0 * sh0, r = (c.r || 0) + c.spin; c.spin = 0;
+  c.lock = false; c.scrub = 0;
+  if (u < 6) {
+    // walking pace and reverse: simple, stable kinematic steering
+    if (inp.throttle > 0) u += (u < -0.2 ? 28 : 9 * Math.min(1, 0.45 + 0.6 * grip)) * inp.throttle * dt;
+    if (inp.brake > 0) { if (u > 0.4) u = Math.max(0, u - 30 * grip * inp.brake * dt); else if (inp.throttle === 0) u = Math.max(u - 7 * dt, -12); }
+    const dec = (0.3 + (inp.throttle === 0 ? 1.2 : 0) + DRAG[surf] * Math.abs(u)) * dt;
+    if (u > 0) u = Math.max(0, u - dec); else if (u < 0) u = Math.min(0, u + dec);
+    vl *= Math.exp(-10 * dt);
+    const rk = u * Math.tan(st * 0.42) / P.L;
+    r += (rk - r) * Math.min(1, dt * 12);
+  } else {
+    const mu = 2.0 * grip, Ntot = 9 + 0.125 * u + Math.max(0, bankA) / 2;
+    const Cfast = P.B * P.C * mu * Ntot;                       // total cornering stiffness (per rad)
+    const n = Math.min(10, Math.max(1, Math.ceil(dt / (0.7 * u / Cfast))));
+    const h = dt / n;
+    for (let k = 0; k < n; k++) {
+      const drive = inp.throttle > 0 ? 11.5 * (c.boost || 1) * inp.throttle * Math.max(0, 1 - (u / vm) ** 2) * (surf >= 3 ? 0.55 : 1) : 0;
+      const brake = inp.brake > 0 ? Math.min(38, 0.98 * P.muX * mu * Ntot) * inp.brake : 0;
+      const drag = 0.3 + (c.drsOpen ? 0.00022 : 0.00028) * u * u + (inp.throttle === 0 ? 1.2 : 0) + DRAG[surf] * u + (d.punct ? 0.05 * u : 0);
+      // longitudinal weight transfer: braking loads the front, acceleration loads the rear
+      const dN = clamp((drive - brake - drag) * P.h / P.L, -6, 6);
+      const Nf = Math.max(0.5, Ntot * 0.45 - dN), Nr = Math.max(0.5, Ntot * 0.55 + dN);
+      // speed-sensitive steering: full lock is about the angle that gives peak front grip
+      const delta = st * clamp(0.1 + P.L * mu * Ntot / (u * u), 0.1, 0.38);
+      const muR = mu * P.rearGrip, xF = P.muX * mu * Nf, xR = P.muX * muR * Nr;
+      let Fxf = -brake * P.brakeF, Fxr = drive - Math.min(brake * (1 - P.brakeF), 0.9 * xR);
+      const lockF = -Fxf > xF, lockR = Math.abs(Fxr) > xR;
+      Fxf = Math.max(Fxf, -xF); Fxr = clamp(Fxr, -xR, xR);
+      // friction ellipse per axle: braking or driving uses up cornering grip
+      const capF = mu * Nf * Math.sqrt(Math.max(0, 1 - (Fxf / xF) ** 2)) * (lockF ? 0.35 : 1);
+      const capR = muR * Nr * Math.sqrt(Math.max(0, 1 - (Fxr / xR) ** 2)) * (lockR ? 0.35 : 1);
+      const af = Math.atan2(vl + P.a * r, u) - delta, ar = Math.atan2(vl - P.b * r, u);
+      const Fyf = -capF * tyreCurve(af), Fyr = -capR * tyreCurve(ar);
+      const cd = Math.cos(delta), sd = Math.sin(delta);
+      const du = Fxr + Fxf * cd - Fyf * sd - drag + vl * r;
+      const dvl = Fyf * cd + Fxf * sd + Fyr - u * r;
+      const dr = (P.a * (Fyf * cd + Fxf * sd) - P.b * Fyr) / P.k2;
+      u = Math.max(0, u + du * h); vl += dvl * h; r += dr * h;
+      r *= Math.exp(-0.5 * h);                                 // aero/tyre yaw damping
+      c.lock = c.lock || lockF || lockR;
+      c.scrub = Math.max(c.scrub, Math.abs(af) > 0.14 ? Math.min(1, (Math.abs(af) - 0.14) * 6) : 0);
+    }
+  }
+  c.r = r; c.h += r * dt;
+  const sh = Math.sin(c.h), ch = Math.cos(c.h), wx = u * sh + vl * ch, wz = u * ch - vl * sh;
+  setVel(c, wx, wz);
+  c.x += wx * dt; c.z += wz * dt;
+  c.slip = Math.abs(c.v) > 2 ? angDiff(c.h, c.vh) : 0;
+  return r;
+}
+
 /* push the car back from a barrier on side d (+1 left, -1 right) at lateral distance L along d, and bounce */
 function wallHit(c, Tr, ni, d, L) {
   const pen = c.lat * d - L; if (pen <= 0) return;
@@ -1516,7 +1589,7 @@ function updateSound(dt) {
   sound.update(dt, { on: true, rpm: p.rpm, throttle: game.phase === 'lights' ? (keys.w ? 1 : 0) : p.inp.throttle, gear: p.gear, speed: Math.abs(p.v), kerb: p.surf === 1, slide: Math.max(Math.abs(p.slip) * 2.5, lock ? 0.6 : 0, p.scrub > 0.9 ? 0.4 : 0) * (weather.N && weather.wetAt(p.idx) > 0.3 ? 0.2 : 1), rain: weather.N ? weather.rainAt(p.idx) : 0, impact: p.impact || 0, rival });
   p.impact = 0;
 }
-await loadCarModel('js/car.bin?v=72136907');
+await loadCarModel('js/car.bin?v=72605544');
 initMenu();
 requestAnimationFrame(frame);
 
