@@ -1,11 +1,11 @@
 import * as THREE from 'three';
-import { W, KERB, DS, TRACKS, getTrack, previewPoints, locate, bankH } from './tracks.js?v=95102160';
-import { World } from './world.js?v=95102160';
-import { makeCar, disposeCar, setCompound, makeSafetyCar, loadCarModel, AXLE_F, AXLE_R } from './car.js?v=95102160';
-import { Sound } from './audio.js?v=95102160';
-import { Particles, Skids } from './fx.js?v=95102160';
-import { Weather } from './weather.js?v=95102160';
-import { clamp, angDiff, rng, fmt, store, setMaxAniso, smooth } from './util.js?v=95102160';
+import { W, KERB, DS, TRACKS, getTrack, previewPoints, locate, bankH, elevAt } from './tracks.js?v=95102603';
+import { World } from './world.js?v=95102603';
+import { makeCar, disposeCar, setCompound, makeSafetyCar, loadCarModel, AXLE_F, AXLE_R } from './car.js?v=95102603';
+import { Sound } from './audio.js?v=95102603';
+import { Particles, Skids } from './fx.js?v=95102603';
+import { Weather } from './weather.js?v=95102603';
+import { clamp, angDiff, rng, fmt, store, setMaxAniso, smooth } from './util.js?v=95102603';
 
 const $ = id => document.getElementById(id);
 const VMAX = 100;
@@ -395,6 +395,8 @@ function stepCar(c, inp, dt, Tr) {
   if (c.pit) return pitStep(c, dt, Tr);
   if (c.dnf) return retireStep(c, dt, Tr);
   const surf = c.surf = surfaceOf(c, Tr), wet = weather.wetAt(c.idx);
+  // gravity along the slope: uphill slows the car, downhill speeds it up
+  if (Tr.grade[c.idx] && Math.abs(c.v) > 1) c.v -= 9.81 * Tr.grade[c.idx] * Math.sign(c.v) * dt;
   const tg = tyreGrip(c.tyre.comp, c.tyre.wear, wet), d = c.dmg;
   const dmgF = 1 - 0.2 * d.fw - 0.1 * d.susp - (d.punct ? 0.3 : 0);
   const boost = c.boost || 1;
@@ -667,8 +669,8 @@ function damage(c, impact, where, scale = 1) {
 }
 const DEBRIS = new THREE.Color('#1a1b1f');
 function debris(c, zOff) {
-  const fx = Math.sin(c.h), fz = Math.cos(c.h);
-  for (let k = 0; k < 26; k++) smoke.spawn(c.x + fx * zOff, 0.3, c.z + fz * zOff, fx * c.v * 0.6 + (Math.random() - 0.5) * 6, 2 + Math.random() * 4, fz * c.v * 0.6 + (Math.random() - 0.5) * 6, 1.6 + Math.random(), 0.35, 0.3, 1, DEBRIS, 0.6, 9.8);
+  const fx = Math.sin(c.h), fz = Math.cos(c.h), ey = c.group.position.y;
+  for (let k = 0; k < 26; k++) smoke.spawn(c.x + fx * zOff, ey + 0.3, c.z + fz * zOff, fx * c.v * 0.6 + (Math.random() - 0.5) * 6, 2 + Math.random() * 4, fz * c.v * 0.6 + (Math.random() - 0.5) * 6, 1.6 + Math.random(), 0.35, 0.3, 1, DEBRIS, 0.6, 9.8);
 }
 
 /* ---------------- Driver inputs ---------------- */
@@ -1141,39 +1143,39 @@ function carEffects(c, dt) {
   if (camD > 220) { for (let k = 0; k < 2; k++) skids.lift(c.code + k); return; }
   const fx = Math.sin(c.h), fz = Math.cos(c.h), lx = Math.cos(c.h), lz = -Math.sin(c.h), sp = Math.abs(c.v);
   const wheel = (side, z) => [c.x + lx * side * 0.83 + fx * z, c.z + lz * side * 0.83 + fz * z];
-  const wet = weather.wetAt(c.idx);
+  const wet = weather.wetAt(c.idx), ey = c.group.position.y;
   const lock = c.isPlayer && !c.autopilot && c.inp.brake > 0.8 && sp > 25 && Math.abs(c.steer) > 0.5;
   const sliding = lock || c.scrub > 0.9 || Math.abs(c.slip) > 0.35;
   [[1, AXLE_F], [-1, AXLE_F]].forEach(([s, z], k) => {
     const [x, wz] = wheel(s, z);
     if (sliding && c.surf <= 2 && wet < 0.3) {
-      skids.mark(c.code + k, x, wz, fx, fz, 0.55);
-      if (Math.random() < dt * 40) smoke.spawn(x, 0.3, wz, -fx * sp * 0.15 + (Math.random() - 0.5), 0.6 + Math.random(), -fz * sp * 0.15 + (Math.random() - 0.5), 1.4 + Math.random(), 0.8, 4.5, 0.32, SMOKE, 1.2);
+      skids.mark(c.code + k, x, wz, fx, fz, 0.55, ey);
+      if (Math.random() < dt * 40) smoke.spawn(x, ey + 0.3, wz, -fx * sp * 0.15 + (Math.random() - 0.5), 0.6 + Math.random(), -fz * sp * 0.15 + (Math.random() - 0.5), 1.4 + Math.random(), 0.8, 4.5, 0.32, SMOKE, 1.2);
     } else skids.lift(c.code + k);
   });
   // spray off the rear tyres in the wet
   if (wet > 0.2 && sp > 15 && Math.random() < dt * 60 * wet) {
     const [x, wz] = wheel(Math.random() < 0.5 ? 1 : -1, -1.7);
-    smoke.spawn(x, 0.5, wz, -fx * sp * 0.35 + (Math.random() - 0.5) * 2, 0.8 + Math.random(), -fz * sp * 0.35 + (Math.random() - 0.5) * 2, 0.9 + Math.random() * 0.6, 1.2, 6, 0.16 + 0.12 * wet, SPRAY, 1.6);
+    smoke.spawn(x, ey + 0.5, wz, -fx * sp * 0.35 + (Math.random() - 0.5) * 2, 0.8 + Math.random(), -fz * sp * 0.35 + (Math.random() - 0.5) * 2, 0.9 + Math.random() * 0.6, 1.2, 6, 0.16 + 0.12 * wet, SPRAY, 1.6);
   }
   if (c.surf >= 3 && sp > 6) {
     for (const s of [1, -1]) {
       const [x, wz] = wheel(s, AXLE_R);
-      if (Math.random() < dt * 30) { tmpC.copy(c.surf === 3 ? DUST : GRASS); smoke.spawn(x, 0.25, wz, -fx * sp * 0.2 + (Math.random() - 0.5) * 2, 1 + Math.random() * 2, -fz * sp * 0.2 + (Math.random() - 0.5) * 2, 1.6, 1, 5, c.surf === 3 ? 0.55 : 0.35, tmpC, 1); }
+      if (Math.random() < dt * 30) { tmpC.copy(c.surf === 3 ? DUST : GRASS); smoke.spawn(x, ey + 0.25, wz, -fx * sp * 0.2 + (Math.random() - 0.5) * 2, 1 + Math.random() * 2, -fz * sp * 0.2 + (Math.random() - 0.5) * 2, 1.6, 1, 5, c.surf === 3 ? 0.55 : 0.35, tmpC, 1); }
     }
   }
   c.sparkT -= dt;
   const sparkRate = wet > 0.3 ? 0 : (sp > 62 && Math.abs(T().curv[c.idx]) < 0.003 ? 0.6 : 0) + (c.surf === 1 && sp > 35 ? 3 : 0);
   if (c.sparkT <= 0 && sparkRate > 0 && Math.random() < sparkRate * dt * 8) {
     c.sparkT = 0.15 + Math.random() * 0.4;
-    for (let k = 0; k < 14; k++) sparks.spawn(c.x - fx * 1.9 + (Math.random() - 0.5) * 0.6, 0.06, c.z - fz * 1.9 + (Math.random() - 0.5) * 0.6, -fx * sp * 0.35 + (Math.random() - 0.5) * 4, 0.5 + Math.random() * 2.5, -fz * sp * 0.35 + (Math.random() - 0.5) * 4, 0.25 + Math.random() * 0.35, 0.22, 0.08, 1, SPARK, 2, 9.8);
+    for (let k = 0; k < 14; k++) sparks.spawn(c.x - fx * 1.9 + (Math.random() - 0.5) * 0.6, ey + 0.06, c.z - fz * 1.9 + (Math.random() - 0.5) * 0.6, -fx * sp * 0.35 + (Math.random() - 0.5) * 4, 0.5 + Math.random() * 2.5, -fz * sp * 0.35 + (Math.random() - 0.5) * 4, 0.25 + Math.random() * 0.35, 0.22, 0.08, 1, SPARK, 2, 9.8);
   }
   if (c.hitT > 0.05) {
-    for (let k = 0; k < 30 * c.hitT; k++) sparks.spawn(c.x + lx * (c.hitSide || 1) * 0.9, 0.4, c.z + lz * (c.hitSide || 1) * 0.9, fx * sp * 0.5 + (Math.random() - 0.5) * 8, Math.random() * 5, fz * sp * 0.5 + (Math.random() - 0.5) * 8, 0.3 + Math.random() * 0.4, 0.25, 0.1, 1, SPARK, 1.5, 9.8);
-    smoke.spawn(c.x, 0.6, c.z, 0, 1, 0, 1.5, 1, 6, 0.3 * c.hitT, SMOKE, 1);
+    for (let k = 0; k < 30 * c.hitT; k++) sparks.spawn(c.x + lx * (c.hitSide || 1) * 0.9, ey + 0.4, c.z + lz * (c.hitSide || 1) * 0.9, fx * sp * 0.5 + (Math.random() - 0.5) * 8, Math.random() * 5, fz * sp * 0.5 + (Math.random() - 0.5) * 8, 0.3 + Math.random() * 0.4, 0.25, 0.1, 1, SPARK, 1.5, 9.8);
+    smoke.spawn(c.x, ey + 0.6, c.z, 0, 1, 0, 1.5, 1, 6, 0.3 * c.hitT, SMOKE, 1);
     c.hitT = 0;
   }
-  if (c.dmg.punct && sp > 8 && Math.random() < dt * 20) sparks.spawn(c.x, 0.05, c.z, -fx * sp * 0.3, Math.random() * 2, -fz * sp * 0.3, 0.3, 0.2, 0.08, 1, SPARK, 2, 9.8);
+  if (c.dmg.punct && sp > 8 && Math.random() < dt * 20) sparks.spawn(c.x, ey + 0.05, c.z, -fx * sp * 0.3, Math.random() * 2, -fz * sp * 0.3, 0.3, 0.2, 0.08, 1, SPARK, 2, 9.8);
 }
 
 /* ---------------- Update ---------------- */
@@ -1234,11 +1236,11 @@ function update(dt) {
 function updateCarVisuals(dt) {
   for (const c of game.cars) {
     if (!c.group.visible) continue;
-    c.group.position.set(c.x, 0, c.z); c.group.rotation.y = c.h;
+    c.group.position.set(c.x, 0, c.z); c.group.rotation.order = 'YXZ'; c.group.rotation.y = c.h;
     c.wheelRot += c.v * dt / 0.36;
     for (const w of c.wheels) { w.spin.rotation.x = c.wheelRot; if (w.front) w.pivot.rotation.y = c.steer * 0.32; }
     c.steering.rotation.z = -c.steer * 0.9;
-    const tgtPitch = (c.inp.brake ? 0.012 : 0) - (c.inp.throttle && c.v < 60 ? 0.006 : 0), tgtRoll = -c.steer * Math.min(1, Math.abs(c.v) / 50) * 0.012 + c.dmg.pull * 0.15;
+    const tgtPitch = (c.inp.brake ? 0.012 : 0) - (c.inp.throttle && c.v < 60 ? 0.006 : 0) - Math.atan(game.T.grade[c.idx] || 0) * Math.cos(angDiff(c.h, Math.atan2(game.T.tx[c.idx], game.T.tz[c.idx]))), tgtRoll = -c.steer * Math.min(1, Math.abs(c.v) / 50) * 0.012 + c.dmg.pull * 0.15;
     c.group.rotation.x += (tgtPitch - c.group.rotation.x) * Math.min(1, dt * 6);
     c.roll = (c.roll || 0) + (tgtRoll - (c.roll || 0)) * Math.min(1, dt * 6); c.group.rotation.z = c.roll;
     const Tb = game.T, bh = bankH(Tb, c.idx, c.lat), inBank = Math.abs(c.lat) < W + KERB + 2 ? Math.atan(Tb.bank[c.idx]) : 0;
@@ -1286,7 +1288,7 @@ function updateCamera(dt, time) {
     g.localToWorld(tmpV.set(Math.sin(slipLook) * 9.8, 2.9, -9.8 * Math.cos(slipLook))); g.localToWorld(tmpL.set(-c.steer * 1.2, 1.0, 5));
     if (camPos.lengthSq() === 0) { camPos.copy(tmpV); camLook.copy(tmpL); }
     camPos.lerp(tmpV, 1 - Math.exp(-dt * 7)); camLook.lerp(tmpL, 1 - Math.exp(-dt * 12));
-    camPos.y = Math.max(camPos.y, 1.0);
+    camPos.y = Math.max(camPos.y, bankH(game.T, c.idx, c.lat) + 1.0);
     camera.position.copy(camPos).add(tmpV.set(jx * 4, jy * 4, 0)); camera.lookAt(camLook); camera.fov = 60 + sp * 0.1;
   }
   camera.updateProjectionMatrix();
@@ -1295,8 +1297,8 @@ function updateMenuCamera(dt) {
   const Tr = getTrack(settings.track);
   game.orbit += dt * 0.035;
   const i = Math.floor((game.orbit * 60) % Tr.N), j = (i + 40) % Tr.N, s = Math.sin(game.orbit * 0.7);
-  camera.position.set(Tr.px[i] + Tr.nx[i] * (14 + 8 * s), 6 + 3 * Math.sin(game.orbit * 0.5), Tr.pz[i] + Tr.nz[i] * (14 + 8 * s));
-  camera.lookAt(Tr.px[j], 1.5, Tr.pz[j]); camera.fov = 55; camera.updateProjectionMatrix();
+  camera.position.set(Tr.px[i] + Tr.nx[i] * (14 + 8 * s), elevAt(Tr, i) + 6 + 3 * Math.sin(game.orbit * 0.5), Tr.pz[i] + Tr.nz[i] * (14 + 8 * s));
+  camera.lookAt(Tr.px[j], elevAt(Tr, j) + 1.5, Tr.pz[j]); camera.fov = 55; camera.updateProjectionMatrix();
 }
 
 /* ---------------- HUD ---------------- */
@@ -1620,7 +1622,7 @@ function frame(now) {
     }
     if (!window.__camLock) updateCamera(dt, clock);
     updateHUD(dt);
-    focus.set(game.player.x, 0, game.player.z);
+    focus.set(game.player.x, game.player.group.position.y, game.player.z);
   } else {
     if (!window.__camLock) updateMenuCamera(dt);
     focus.copy(camera.position).setY(0);
@@ -1639,7 +1641,7 @@ function updateSound(dt) {
   sound.update(dt, { on: true, rpm: p.rpm, throttle: game.phase === 'lights' ? (keys.w ? 1 : 0) : p.inp.throttle, gear: p.gear, speed: Math.abs(p.v), kerb: p.surf === 1, slide: Math.max(Math.abs(p.slip) * 2.5, lock ? 0.6 : 0, p.scrub > 0.9 ? 0.4 : 0) * (weather.N && weather.wetAt(p.idx) > 0.3 ? 0.2 : 1), rain: weather.N ? weather.rainAt(p.idx) : 0, impact: p.impact || 0, rival });
   p.impact = 0;
 }
-await loadCarModel('js/car.bin?v=95102160');
+await loadCarModel('js/car.bin?v=95102603');
 initMenu();
 requestAnimationFrame(frame);
 
@@ -1647,5 +1649,5 @@ requestAnimationFrame(frame);
 window.__apex = {
   deployFlag, game, settings, update, updateCarVisuals, updateCamera, updateHUD, setCam, startWeekend, startRace, startSession, leaveGarage, nextQualiStep, endQualiSession, showStrategy,
   buildTrack, getTrack, world, weather, renderer, scene, camera, standings, positionOf, keys, estimateLap, aiPace,
-  frameOnce: () => { renderWeather(0.016); world.update(0.016, focus.set(game.player ? game.player.x : 0, 0, game.player ? game.player.z : 0), camera); renderer.render(scene, camera); },
+  frameOnce: () => { renderWeather(0.016); world.update(0.016, focus.set(game.player ? game.player.x : 0, game.player ? game.player.group.position.y : 0, game.player ? game.player.z : 0), camera); renderer.render(scene, camera); },
 };

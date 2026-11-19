@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { canvasTex } from './util.js?v=95102160';
+import { canvasTex } from './util.js?v=95102603';
 
 const VERT = `
 attribute float size; attribute float alpha; attribute vec3 tint;
@@ -81,13 +81,13 @@ export class Skids {
     this.mesh.frustumCulled = false; this.mesh.renderOrder = 2; scene.add(this.mesh);
     this.last = new Map();
   }
-  mark(key, x, z, hx, hz, strength) {
+  mark(key, x, z, hx, hz, strength, y = 0) {
     const prev = this.last.get(key);
     this.last.set(key, { x, z, t: performance.now() });
     if (!prev || performance.now() - prev.t > 120) return;
     const dx = x - prev.x, dz = z - prev.z, l = Math.hypot(dx, dz); if (l < 0.25 || l > 6) return;
     const nx = -dz / l * 0.17, nz = dx / l * 0.17, i = this.head; this.head = (this.head + 1) % this.max;
-    this.posA.array.set([prev.x + nx, 0.042, prev.z + nz, prev.x - nx, 0.042, prev.z - nz, x + nx, 0.042, z + nz, x - nx, 0.042, z - nz], i * 12);
+    const yy = y + 0.042; this.posA.array.set([prev.x + nx, yy, prev.z + nz, prev.x - nx, yy, prev.z - nz, x + nx, yy, z + nz, x - nx, yy, z - nz], i * 12);
     this.alA.array.set([strength, strength, strength, strength], i * 4);
     this.posA.needsUpdate = this.alA.needsUpdate = true;
   }

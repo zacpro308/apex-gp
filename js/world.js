@@ -1,8 +1,8 @@
 import * as THREE from 'three';
 import { Sky } from 'three/addons/objects/Sky.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
-import { W, KERB, DS, bankH } from './tracks.js?v=95102160';
-import { rng, makeNoise, canvasTex, normalTex, noiseFill, smooth, clamp } from './util.js?v=95102160';
+import { W, KERB, DS, bankH, elevAt } from './tracks.js?v=95102603';
+import { rng, makeNoise, canvasTex, normalTex, noiseFill, smooth, clamp } from './util.js?v=95102603';
 
 const TMP_GREY = new THREE.Color('#8b939c');
 const AD_WORDS = ['APEX GP', 'NOVA FUEL', 'KITE TYRES', 'ORBITAL', 'HELIX', 'SUMMIT', 'VOLTA', 'RAPIDE', 'ZENITH', 'TORQUE+'];
@@ -149,12 +149,17 @@ export class World {
     /* ----- distance field + terrain ----- */
     const span = Math.max(T.maxX - T.minX, T.maxZ - T.minZ) + 4600;
     const x0 = T.cx - span / 2, z0 = T.cz - span / 2;
-    const DF = 200, cell = span / DF, df = new Float32Array((DF + 1) * (DF + 1));
+    const DF = 200, cell = span / DF, df = new Float32Array((DF + 1) * (DF + 1)), ef = new Float32Array((DF + 1) * (DF + 1));
     for (let j = 0; j <= DF; j++) for (let i = 0; i <= DF; i++) {
-      const x = x0 + i * cell, z = z0 + j * cell; let m = 1e12;
-      for (let k = 0; k < N; k += 4) { const dx = x - T.px[k], dz = z - T.pz[k], d = dx * dx + dz * dz; if (d < m) m = d; }
-      df[j * (DF + 1) + i] = Math.sqrt(m);
+      const x = x0 + i * cell, z = z0 + j * cell; let m = 1e12, mk = 0;
+      for (let k = 0; k < N; k += 4) { const dx = x - T.px[k], dz = z - T.pz[k], d = dx * dx + dz * dz; if (d < m) { m = d; mk = k; } }
+      df[j * (DF + 1) + i] = Math.sqrt(m); ef[j * (DF + 1) + i] = elevAt(T, mk);
     }
+    // elevation of the nearest part of the track, so the land rises and falls with it
+    const elevNear = (x, z) => {
+      const fx = clamp((x - x0) / cell, 0, DF - 0.001), fz = clamp((z - z0) / cell, 0, DF - 0.001), i = Math.floor(fx), j = Math.floor(fz), u = fx - i, v = fz - j, R = DF + 1;
+      return (ef[j * R + i] * (1 - u) + ef[j * R + i + 1] * u) * (1 - v) + (ef[(j + 1) * R + i] * (1 - u) + ef[(j + 1) * R + i + 1] * u) * v;
+    };
     const dist = (x, z) => {
       const fx = clamp((x - x0) / cell, 0, DF - 0.001), fz = clamp((z - z0) / cell, 0, DF - 0.001), i = Math.floor(fx), j = Math.floor(fz), u = fx - i, v = fz - j, R = DF + 1;
       return (df[j * R + i] * (1 - u) + df[j * R + i + 1] * u) * (1 - v) + (df[(j + 1) * R + i] * (1 - u) + df[(j + 1) * R + i + 1] * u) * v;
@@ -163,8 +168,8 @@ export class World {
     const flat = T.wallOff + (T.street ? 70 : 45), amp = th.hillAmp;
     const wdir = th.water && th.water.mode === 'side' ? [Math.cos(th.water.angle), Math.sin(th.water.angle)] : null;
     const height = (x, z) => {
-      const d = dist(x, z), t = smooth(flat, flat + 600, d);
-      if (t <= 0) return 0;
+      const d = dist(x, z), t = smooth(flat, flat + 600, d), base = T.elev ? elevNear(x, z) - 0.6 * (1 - smooth(T.wallOff, flat, d)) : 0;
+      if (t <= 0) return base;
       let h;
       const sx = x / 1000, sz = z / 1000;
       switch (th.relief) {
@@ -174,7 +179,7 @@ export class World {
         case 'flat': h = noise.fbm(sx * 2, sz * 2, 3) * amp + amp * 0.2; break;
         default: h = (noise.fbm(sx * 1.1, sz * 1.1, 5) * 0.9 + 0.35) * amp;
       }
-      h *= t;
+      h = h * t + base;
       if (th.water) {
         if (wdir) { const pr = (x - T.cx) * wdir[0] + (z - T.cz) * wdir[1]; h -= smooth(T.radius + 150, T.radius + 700, pr) * (h + 45); }
         else { const l = noise.fbm(sx * 0.9 + 7, sz * 0.9 + 3, 3); h -= smooth(-0.02, -0.25, l) * smooth(flat + 120, flat + 400, d) * (h + 40); }
@@ -273,7 +278,7 @@ export class World {
         add(ribbon(T, i0, cnt, [i => [s * (lim(i) + 0.4), 1.15, 0], i => [s * (lim(i) + 0.4), 4.2, 1]], 3.05, { up: false }), fenceMat, { recv: false });
       }
     }
-    if (T.def.bank) for (const s of [1, -1]) {
+    if (T.banked) for (const s of [1, -1]) {
       const lim = sideLim(T, s);
       add(ribbon(T, 0, N, [i => [s * (lim(i) + 0.5), 0, 0], i => [s * (lim(i) + 0.5 + Math.max(2, bankH(T, i, s * lim(i)) * 2.2)), -bankH(T, i, s * (lim(i) + 0.5 + Math.max(2, bankH(T, i, s * lim(i)) * 2.2))), 1]], 12), new THREE.MeshStandardMaterial({ map: tx.verge, color: th.grass, roughness: 1, side: THREE.DoubleSide }));
     }
@@ -291,7 +296,7 @@ export class World {
       const gg = new THREE.BufferGeometry();
       const slotGeo = mergeGeometries([new THREE.PlaneGeometry(2.6, 0.25).rotateX(-Math.PI / 2), new THREE.PlaneGeometry(0.2, 1.2).rotateX(-Math.PI / 2).translate(1.2, 0, -0.6), new THREE.PlaneGeometry(0.2, 1.2).rotateX(-Math.PI / 2).translate(-1.2, 0, -0.6)]);
       const im = new THREE.InstancedMesh(slotGeo, gm, 22); const d = new THREE.Object3D();
-      for (let s2 = 0; s2 < 22; s2++) { const back = 8 + s2 * 8, i = (N - Math.round(back / DS) + 1) % N, lane = (s2 % 2 === 0 ? 1 : -1) * 3.2; d.position.set(T.px[i] + T.nx[i] * lane, 0.04, T.pz[i] + T.nz[i] * lane); d.rotation.set(0, Math.atan2(T.tx[i], T.tz[i]), 0); d.updateMatrix(); im.setMatrixAt(s2, d.matrix); }
+      for (let s2 = 0; s2 < 22; s2++) { const back = 8 + s2 * 8, i = (N - Math.round(back / DS) + 1) % N, lane = (s2 % 2 === 0 ? 1 : -1) * 3.2; d.position.set(T.px[i] + T.nx[i] * lane, bankH(T, i, lane) + 0.04, T.pz[i] + T.nz[i] * lane); d.rotation.set(0, Math.atan2(T.tx[i], T.tz[i]), 0); d.updateMatrix(); im.setMatrixAt(s2, d.matrix); }
       im.receiveShadow = true; G.add(im); gg.dispose(); }
 
     /* ----- racing line (green = full throttle, yellow = lift, red = brake) ----- */
@@ -329,7 +334,7 @@ export class World {
         for (const [i, tex] of [[z.detect, detTex], [z.start, actTex]]) {
           add(ribbon(T, i, 1, [col(W, 0.043, 0), col(-W, 0.043, 1)], 2), lineM).scale.set(1, 1, 1);
           const lim = T.limR[i];
-          const fr = new THREE.Object3D(); fr.position.set(T.px[i] - T.nx[i] * (lim + 1.2), 0, T.pz[i] - T.nz[i] * (lim + 1.2)); fr.rotation.y = Math.atan2(T.tx[i], T.tz[i]); G.add(fr);
+          const fr = new THREE.Object3D(); fr.position.set(T.px[i] - T.nx[i] * (lim + 1.2), elevAt(T, i), T.pz[i] - T.nz[i] * (lim + 1.2)); fr.rotation.y = Math.atan2(T.tx[i], T.tz[i]); G.add(fr);
           const post = new THREE.Mesh(new THREE.BoxGeometry(0.12, 2.6, 0.12).translate(0, 1.3, 0), new THREE.MeshStandardMaterial({ color: '#555b66' })); fr.add(post);
           const board = new THREE.Mesh(new THREE.PlaneGeometry(2.4, 1.2), new THREE.MeshStandardMaterial({ map: tex, roughness: 0.6, emissive: th.night ? '#ffffff' : '#000000', emissiveMap: th.night ? tex : null, emissiveIntensity: 0.6 }));
           board.position.set(0, 3.0, 0.08); board.rotation.y = Math.PI; fr.add(board);
@@ -338,7 +343,7 @@ export class World {
     }
 
     /* ----- trackside structures ----- */
-    const frameAt = (i, lat, y = 0) => { const o = new THREE.Object3D(); o.position.set(T.px[i] + T.nx[i] * lat, y, T.pz[i] + T.nz[i] * lat); o.rotation.y = Math.atan2(T.tx[i], T.tz[i]); return o; };
+    const frameAt = (i, lat, y = elevAt(T, i)) => { const o = new THREE.Object3D(); o.position.set(T.px[i] + T.nx[i] * lat, y, T.pz[i] + T.nz[i] * lat); o.rotation.y = Math.atan2(T.tx[i], T.tz[i]); return o; };
     const steel = new THREE.MeshStandardMaterial({ color: '#2a2e36', roughness: 0.5, metalness: 0.6 });
     const white = new THREE.MeshStandardMaterial({ color: '#eef0f2', roughness: 0.6 });
     // gantry with start lights
@@ -371,7 +376,7 @@ export class World {
       const tc = new THREE.Color(), d = new THREE.Object3D();
       const boxes = new THREE.InstancedMesh(new THREE.PlaneGeometry(3.2, 5.6).rotateX(-Math.PI / 2), boxMat, teamColors.length + 1);
       for (let k = 0; k <= teamColors.length; k++) {
-        const i = (P.boxStart + k * P.boxGap) % N; d.position.set(T.px[i] + T.nx[i] * P.lat, 0.025, T.pz[i] + T.nz[i] * P.lat); d.rotation.set(0, Math.atan2(T.tx[i], T.tz[i]), 0); d.updateMatrix();
+        const i = (P.boxStart + k * P.boxGap) % N; d.position.set(T.px[i] + T.nx[i] * P.lat, bankH(T, i, P.lat) + 0.025, T.pz[i] + T.nz[i] * P.lat); d.rotation.set(0, Math.atan2(T.tx[i], T.tz[i]), 0); d.updateMatrix();
         boxes.setMatrixAt(k, d.matrix); tc.set(k === teamColors.length ? '#ffcc00' : teamColors[k]).multiplyScalar(0.8); boxes.setColorAt(k, tc);
       }
       boxes.receiveShadow = true; G.add(boxes);
@@ -383,7 +388,7 @@ export class World {
       const roof = mkIM(new THREE.BoxGeometry(17, 0.5, 12.4).translate(0, 10.25, 0), white);
       segs.forEach((i, k) => {
         const lat = ps * (outer + 6.3);
-        d.position.set(T.px[i] + T.nx[i] * lat, 0, T.pz[i] + T.nz[i] * lat); d.rotation.set(0, Math.atan2(T.tx[i], T.tz[i]) + Math.PI / 2, 0); d.updateMatrix();
+        d.position.set(T.px[i] + T.nx[i] * lat, bankH(T, i, lat), T.pz[i] + T.nz[i] * lat); d.rotation.set(0, Math.atan2(T.tx[i], T.tz[i]) + Math.PI / 2, 0); d.updateMatrix();
         lower.setMatrixAt(k, d.matrix); upper.setMatrixAt(k, d.matrix); roof.setMatrixAt(k, d.matrix);
         const dd = d.clone(); dd.translateX(-ps * 7.02); dd.rotateY(-ps * Math.PI / 2); dd.updateMatrix(); door.setMatrixAt(k, dd.matrix);
         tc.set(teamColors[Math.floor(k / 2) % teamColors.length]); door.setColorAt(k, tc);
@@ -435,7 +440,7 @@ export class World {
       const pole = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.22, 0.32, 22, 6).translate(0, 11, 0), steel, poles.length);
       const head = new THREE.InstancedMesh(new THREE.BoxGeometry(3.4, 1.2, 0.5).translate(0, 22, 0), new THREE.MeshBasicMaterial({ color: new THREE.Color('#fff4dc').multiplyScalar(4), toneMapped: false, fog: false }), poles.length);
       const d = new THREE.Object3D();
-      poles.forEach(([i, s], k) => { const l = (s > 0 ? T.limL[i] : T.limR[i]) + 3; d.position.set(T.px[i] + T.nx[i] * s * l, 0, T.pz[i] + T.nz[i] * s * l); d.rotation.set(0, Math.atan2(T.tx[i], T.tz[i]), 0); d.updateMatrix(); pole.setMatrixAt(k, d.matrix); head.setMatrixAt(k, d.matrix); });
+      poles.forEach(([i, s], k) => { const l = (s > 0 ? T.limL[i] : T.limR[i]) + 3; d.position.set(T.px[i] + T.nx[i] * s * l, bankH(T, i, s * l), T.pz[i] + T.nz[i] * s * l); d.rotation.set(0, Math.atan2(T.tx[i], T.tz[i]), 0); d.updateMatrix(); pole.setMatrixAt(k, d.matrix); head.setMatrixAt(k, d.matrix); });
       G.add(pole, head);
     }
 
@@ -530,11 +535,11 @@ export class World {
     if (!this.crew) return;
     const { T, per } = this.crewInfo, P = T.pit, ps = P.side, N = T.N;
     const box = (P.boxStart + team * P.boxGap) % N, tx = T.tx[box], tz = T.tz[box], nx = T.nx[box] * ps, nz = T.nz[box] * ps;
-    const bx = T.px[box] + T.nx[box] * P.lat, bz = T.pz[box] + T.nz[box] * P.lat, h = Math.atan2(tx, tz);
+    const bx = T.px[box] + T.nx[box] * P.lat, bz = T.pz[box] + T.nz[box] * P.lat, h = Math.atan2(tx, tz), by = bankH(T, box, P.lat);
     const d = new THREE.Object3D();
     for (let k = 0; k < per; k++) {
       const along = (k - per / 2) * 0.8, side = 3.6 + (k % 2) * 0.7;
-      d.position.set(bx + tx * along + nx * side, 0, bz + tz * along + nz * side); d.rotation.set(0, h + Math.PI / 2 * -ps, 0);
+      d.position.set(bx + tx * along + nx * side, by, bz + tz * along + nz * side); d.rotation.set(0, h + Math.PI / 2 * -ps, 0);
       d.scale.setScalar(active ? 0 : 1); d.updateMatrix(); this.crew.setMatrixAt(team * per + k, d.matrix);
     }
     this.crew.instanceMatrix.needsUpdate = true;
@@ -542,7 +547,7 @@ export class World {
     if (active) {
       if (!sc) { sc = buildStopCrew(this.crewColors[team] || '#ffcc00', ps); this.stopCrews.set(team, sc); this.crewG.add(sc.g); }
       if (car) sc.setCar(car);
-      sc.g.position.set(bx, 0, bz); sc.g.rotation.set(0, h, 0); sc.g.visible = true; sc.anim(-1);
+      sc.g.position.set(bx, by, bz); sc.g.rotation.set(0, h, 0); sc.g.visible = true; sc.anim(-1);
     } else if (sc) sc.g.visible = false;
   }
   /* s < 0: waiting for the car; 0..1: through the stop; > 1: car released */
